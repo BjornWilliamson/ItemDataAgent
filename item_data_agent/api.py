@@ -1,7 +1,10 @@
 """FastAPI application for the Item Data Agent."""
 from contextlib import asynccontextmanager
+import json
+from pathlib import Path
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from pydantic import BaseModel, EmailStr
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from item_data_agent.agent import SupplierAgent
 from item_data_agent.postmark_client import PostmarkClient
@@ -17,21 +20,51 @@ erp_client: ERPClient | None = None
 imap_client: IMAPClient | None = None
 agent: SupplierAgent | None = None
 email_poller: EmailPoller | None = None
+checkpointer_context = None
 
 # Thread ID to item number mapping (in production, use database)
 thread_to_item: dict[str, str] = {}
+MAPPING_FILE = Path("thread_mappings.json")
+
+
+def load_thread_mappings():
+    """Load thread to item mappings from disk."""
+    global thread_to_item
+    if MAPPING_FILE.exists():
+        try:
+            with open(MAPPING_FILE, 'r') as f:
+                thread_to_item = json.load(f)
+            print(f"📂 Loaded {len(thread_to_item)} thread mappings")
+        except Exception as e:
+            print(f"⚠️ Error loading thread mappings: {e}")
+            thread_to_item = {}
+
+
+def save_thread_mappings():
+    """Save thread to item mappings to disk."""
+    try:
+        with open(MAPPING_FILE, 'w') as f:
+            json.dump(thread_to_item, f, indent=2)
+    except Exception as e:
+        print(f"⚠️ Error saving thread mappings: {e}")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events."""
-    global postmark_client, erp_client, imap_client, agent, email_poller
+    global postmark_client, erp_client, imap_client, agent, email_poller, checkpointer_context
     
     # Startup
+    load_thread_mappings()  # Load persisted mappings
+    
     postmark_client = PostmarkClient()
     erp_client = ERPClient()
     imap_client = IMAPClient()
     agent = SupplierAgent(postmark_client, erp_client)
+    
+    # Initialize checkpointer with context manager
+    checkpointer_context = AsyncSqliteSaver.from_conn_string(settings.database_path)
+    agent.checkpointer = await checkpointer_context.__aenter__()
     
     # Start email polling (checks IMAP inbox every 30 seconds)
     email_poller = EmailPoller(
@@ -47,6 +80,12 @@ async def lifespan(app: FastAPI):
     # Shutdown
     if email_poller:
         await email_poller.stop()
+    
+    # Close checkpointer
+    if checkpointer_context:
+        await checkpointer_context.__aexit__(None, None, None)
+    
+    save_thread_mappings()  # Save mappings before shutdown
     postmark_client = None
     erp_client = None
     imap_client = None
@@ -62,12 +101,19 @@ app = FastAPI(
 )
 
 
+class FieldSpec(BaseModel):
+    """Specification for a missing data field."""
+    name: str
+    type: str = "string"  # string | number | boolean | file | date
+    description: str | None = None
+
+
 class ItemDataRequest(BaseModel):
     """Request model for initiating supplier communication."""
     
     item_number: str
     item_name: str
-    missing_data: list[str]
+    missing_data: list[FieldSpec]
     supplier_email: EmailStr
     
     class Config:
@@ -75,7 +121,11 @@ class ItemDataRequest(BaseModel):
             "example": {
                 "item_number": "ITEM-12345",
                 "item_name": "Widget Pro 2000",
-                "missing_data": ["lead_time", "minimum_order_quantity", "unit_price"],
+                "missing_data": [
+                    {"name": "lead_time", "type": "string"},
+                    {"name": "unit_price", "type": "number"},
+                    {"name": "data_sheet", "type": "file", "description": "PDF datasheet"}
+                ],
                 "supplier_email": "supplier@example.com"
             }
         }
@@ -141,13 +191,22 @@ async def request_item_data(
             "messages": [],
             "item_number": request.item_number,
             "item_name": request.item_name,
-            "missing_data": request.missing_data,
+            # Normalize field names, preserve type and description
+            "missing_data": [
+                {
+                    "name": f.name.replace('_', ' ').lower().strip(),
+                    "type": f.type.lower(),
+                    "description": f.description
+                }
+                for f in request.missing_data
+            ],
             "supplier_email": request.supplier_email,
             "extracted_data": {},
             "email_thread_id": None,
             "conversation_started": False,
             "data_complete": False,
-            "erp_updated": False
+            "erp_updated": False,
+            "processed_message_ids": []
         }
         
         # Configuration for thread management
@@ -164,6 +223,7 @@ async def request_item_data(
         if result.get("email_thread_id"):
             thread_id = str(result["email_thread_id"])  # Ensure string
             thread_to_item[thread_id] = request.item_number
+            save_thread_mappings()  # Persist immediately
             print(f"📎 Mapped thread {thread_id} to item {request.item_number}")
         
         # PoC: Disable background monitoring - no automatic reminders
@@ -408,7 +468,12 @@ async def process_inbound_reply(webhook_data: dict):
     Args:
         webhook_data: Webhook payload from Postmark
     """
+    print(f"\n🤖 ===== PROCESSING INBOUND REPLY =====")
+    print(f"   From: {webhook_data.get('From')}")
+    print(f"   Subject: {webhook_data.get('Subject')}")
+    
     if not agent:
+        print(f"   ❌ Agent not initialized!")
         return
     
     print(f"🤖 Processing inbound reply from {webhook_data.get('From')}")
@@ -437,11 +502,30 @@ async def process_inbound_reply(webhook_data: dict):
         print("   ⚠️  No thread ID found, skipping")
         return
     
-    # Look up item number from thread ID
-    item_number = thread_to_item.get(thread_id)
+    # Normalize thread ID - strip angle brackets and domain for matching
+    # Email headers may have: <message-id@domain> but we store: message-id
+    def normalize_thread_id(tid: str) -> str:
+        # Remove angle brackets
+        tid = tid.strip('<>')
+        # Remove @domain if present
+        if '@' in tid:
+            tid = tid.split('@')[0]
+        return tid
+    
+    normalized_thread_id = normalize_thread_id(thread_id)
+    
+    # Try to find item number with normalized ID
+    item_number = thread_to_item.get(thread_id)  # Try exact match first
+    if not item_number:
+        # Try normalized match
+        for stored_id, item_num in thread_to_item.items():
+            if normalize_thread_id(stored_id) == normalized_thread_id:
+                item_number = item_num
+                break
     
     if not item_number:
         print(f"   ⚠️  No item number found for thread {thread_id}")
+        print(f"   Normalized: {normalized_thread_id}")
         print(f"   Available mappings: {list(thread_to_item.keys())}")
         return
     
@@ -466,6 +550,8 @@ async def process_inbound_reply(webhook_data: dict):
             return
         
         current_state = state_snapshot.values
+        print(f"   📋 Current state - Thread ID in state: {current_state.get('email_thread_id')}")
+        print(f"   📋 Conversation started: {current_state.get('conversation_started')}")
         
         # Continue the workflow - it will check for new messages and respond
         result = await graph.ainvoke(current_state, config)

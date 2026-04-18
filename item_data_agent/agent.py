@@ -3,7 +3,7 @@ from typing import Literal
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from item_data_agent.state import AgentState
 from item_data_agent.config import settings
@@ -28,16 +28,18 @@ class SupplierAgent:
             temperature=0.7,
             api_key=settings.openai_api_key
         )
+        # Checkpointer will be set externally
+        self.checkpointer = None
         
     async def create_graph(self):
         """Create the LangGraph workflow."""
-        # Create checkpointer for persistence (using in-memory for now)
-        memory = MemorySaver()
+        # Use the checkpointer set during initialization
         
         # Build the graph
         workflow = StateGraph(AgentState)
         
         # Add nodes
+        workflow.add_node("route_entry", self.route_entry)
         workflow.add_node("compose_email", self.compose_email)
         workflow.add_node("send_email", self.send_email)
         workflow.add_node("check_responses", self.check_responses)
@@ -45,16 +47,23 @@ class SupplierAgent:
         workflow.add_node("update_erp", self.update_erp)
         
         # Add edges
-        workflow.set_entry_point("compose_email")
+        workflow.set_entry_point("route_entry")
+        workflow.add_conditional_edges(
+            "route_entry",
+            self.should_check_or_compose,
+            {
+                "compose": "compose_email",
+                "check": "check_responses"
+            }
+        )
         workflow.add_edge("compose_email", "send_email")
-        workflow.add_edge("send_email", "check_responses")
+        workflow.add_edge("send_email", END)
         workflow.add_conditional_edges(
             "check_responses",
             self.should_extract_data,
             {
                 "extract": "extract_data",
                 "wait": END,
-                "compose": "compose_email"
             }
         )
         workflow.add_conditional_edges(
@@ -67,9 +76,25 @@ class SupplierAgent:
         )
         workflow.add_edge("update_erp", END)
         
-        # Compile the graph with memory
-        return workflow.compile(checkpointer=memory)
-    
+        # Compile the graph with persistent checkpointer
+        return workflow.compile(checkpointer=self.checkpointer)
+
+    async def route_entry(self, state: AgentState) -> AgentState:
+        """Pass-through entry node to allow routing decision."""
+        return state
+
+    def should_check_or_compose(self, state: AgentState) -> Literal["compose", "check"]:
+        """Decide whether to compose a new email or check for replies.
+        
+        - First run (conversation not started): compose initial email
+        - Subsequent runs (triggered by inbound reply): check responses first
+        """
+        if not state.get("conversation_started"):
+            print("   🚀 Entry: no conversation yet → compose initial email")
+            return "compose"
+        print("   🔄 Entry: conversation in progress → check for new replies")
+        return "check"
+
     async def compose_email(self, state: AgentState) -> AgentState:
         """Compose an email to the supplier requesting missing data.
         
@@ -83,27 +108,64 @@ class SupplierAgent:
         is_followup = state.get("conversation_started", False)
         
         # Check what data still needs to be collected
+        extracted_data = state.get("extracted_data", {})
         missing_fields = [
             field for field in state["missing_data"]
-            if field not in state.get("extracted_data", {})
+            if field["name"] not in extracted_data
         ]
+        received_fields = [
+            field for field in state["missing_data"]
+            if field["name"] in extracted_data
+        ]
+
+        def field_label(f: dict) -> str:
+            label = f["name"]
+            if f.get("description"):
+                label += f" ({f['description']})"
+            if f["type"] == "file":
+                label += " [file attachment]"
+            elif f["type"] == "number":
+                label += " [number]"
+            elif f["type"] == "date":
+                label += " [date]"
+            return label
         
         system_prompt = """You are a professional procurement assistant helping to gather 
         missing product information from suppliers. Be polite, clear, and concise in your 
         communications. Always maintain a professional tone."""
         
         if is_followup:
-            user_prompt = f"""Compose a follow-up email to the supplier about item {state['item_number']} 
-            ({state['item_name']}). We still need the following information: {', '.join(missing_fields)}.
-            
-            Reference the previous conversation history and be polite but persistent.
-            Keep the email concise and professional."""
+            if received_fields and missing_fields:
+                user_prompt = f"""Compose a follow-up email to the supplier about item {state['item_number']} 
+                ({state['item_name']}).
+                
+                IMPORTANT: Thank them for providing: {', '.join(f['name'] for f in received_fields)}.
+                Clearly state that we STILL NEED:
+                {chr(10).join(f'  - {field_label(f)}' for f in missing_fields)}
+                
+                Do NOT re-request the information we already received.
+                For file fields, remind them to attach the file to their reply.
+                Be polite but clear about what's needed.
+                Keep the email concise and professional."""
+            elif missing_fields:
+                user_prompt = f"""Compose a follow-up email to the supplier about item {state['item_number']} 
+                ({state['item_name']}). We still need:
+                {chr(10).join(f'  - {field_label(f)}' for f in missing_fields)}
+                
+                For file fields, ask them to attach the file to their reply.
+                Reference the previous conversation and be polite but persistent.
+                Keep the email concise and professional."""
+            else:
+                user_prompt = f"""Compose a brief thank you email acknowledging receipt of all 
+                requested information for item {state['item_number']}."""
         else:
             user_prompt = f"""Compose an initial email to the supplier requesting missing information 
             for item {state['item_number']} ({state['item_name']}).
             
-            We need the following information: {', '.join(state['missing_data'])}.
+            We need the following information:
+            {chr(10).join(f'  - {field_label(f)}' for f in missing_fields)}
             
+            For file fields, ask them to attach the file to their reply.
             Be polite, introduce the request clearly, and ask for a timely response.
             Keep the email concise and professional."""
         
@@ -132,15 +194,29 @@ class SupplierAgent:
         # Get the last AI message (composed email)
         email_body = state["messages"][-1].content
         
-        subject = f"Request for Information - Item {state['item_number']}"
+        # Compose subject line
+        base_subject = f"Request for Information - Item {state['item_number']}"
+        
+        # Get existing thread ID for follow-ups
+        existing_thread_id = state.get("email_thread_id")
+        
+        # If this is a follow-up, add "Re:" prefix for proper threading
+        if existing_thread_id:
+            subject = f"Re: {base_subject}"
+            print(f"   📧 Sending follow-up on thread: {existing_thread_id}")
+        else:
+            subject = base_subject
+            print(f"   📧 Sending initial email")
         
         # Send email
         thread_id = await self.email_client.send_email(
             to=state["supplier_email"],
             subject=subject,
             body=email_body,
-            thread_id=state.get("email_thread_id")
+            thread_id=existing_thread_id
         )
+        
+        print(f"   ✓ Email sent, thread ID: {thread_id}")
         
         return {
             **state,
@@ -160,16 +236,26 @@ class SupplierAgent:
         if not state.get("email_thread_id"):
             return state
         
+        # Use processed message IDs to track what we've already handled
+        # This survives app restarts unlike counting messages in state
+        processed_ids = set(state.get("processed_message_ids", []))
+        
         # Get new messages from the email thread
-        new_messages = await self.email_client.get_thread_messages(
+        new_messages = await self.email_client.get_new_thread_messages(
             thread_id=state["email_thread_id"],
-            since_count=len(state.get("messages", []))
+            processed_ids=processed_ids
         )
+        
+        print(f"\n📬 Checking for new messages in thread {state['email_thread_id']}")
+        print(f"   Already processed message IDs: {processed_ids}")
+        print(f"   Found {len(new_messages)} new message(s)")
+
         
         # Convert to HumanMessage objects (from supplier)
         human_messages = []
         for msg in new_messages:
             content = msg["body"]
+            print(f"      → Message preview: {content[:150]}...")
             
             # Add attachment info to the message if present
             if msg.get("attachments"):
@@ -182,12 +268,15 @@ class SupplierAgent:
                 attachment_info += "]"
                 content += attachment_info
             
-            human_messages.append(HumanMessage(content=content))
+            human_messages.append({"msg": HumanMessage(content=content), "id": msg["id"]})
         
         if human_messages:
+            # Track processed message IDs so we don't re-process after restart
+            new_processed_ids = list(processed_ids) + [msg["id"] for msg in new_messages]
             return {
                 **state,
-                "messages": [*state.get("messages", []), *human_messages]
+                "messages": [*state.get("messages", []), *[m["msg"] for m in human_messages]],
+                "processed_message_ids": new_processed_ids
             }
         
         return state
@@ -204,21 +293,50 @@ class SupplierAgent:
         # Get the latest supplier message
         latest_message = state["messages"][-1].content
         
+        print(f"   📄 Extracting data from supplier message:")
+        print(f"      Message preview: {latest_message[:200]}...")
+        
         # Determine what data we're still looking for
+        extracted_data = state.get("extracted_data", {})
         missing_fields = [
             field for field in state["missing_data"]
-            if field not in state.get("extracted_data", {})
+            if field["name"] not in extracted_data
         ]
         
-        extraction_prompt = f"""Analyze the following supplier response and extract any information 
-        related to these fields: {', '.join(missing_fields)}.
+        print(f"   🔍 Looking for fields: {[f['name'] for f in missing_fields]}")
+        print(f"   ✓ Already have: {list(extracted_data.keys())}")
+
+        # Build a typed field description for the extraction prompt
+        field_descriptions = []
+        file_fields = []
+        for f in missing_fields:
+            desc = f"- {f['name']} (type: {f['type']})"
+            if f.get("description"):
+                desc += f": {f['description']}"
+            field_descriptions.append(desc)
+            if f["type"] == "file":
+                file_fields.append(f["name"])
+        
+        extraction_prompt = f"""Analyze the following supplier response and extract information 
+        for these fields:
+        {chr(10).join(field_descriptions)}
         
         Supplier response:
         {latest_message}
         
-        Return the extracted data in JSON format with field names as keys. 
-        Only include fields where you found clear information.
-        If no relevant information is found, return an empty object.
+        Rules:
+        - For 'number' fields: extract only the numeric value (e.g. 5.50, 14)
+        - For 'date' fields: extract in ISO format (YYYY-MM-DD) if possible
+        - For 'boolean' fields: return true or false
+        - For 'string' fields: extract the value as-is
+        - For 'file' fields: if an attachment filename is mentioned in [Attachments received:...], 
+          use that filename as the value. Otherwise leave it out.
+        
+        Return ONLY a JSON object with field names as keys.
+        Only include fields where information was clearly found.
+        If no relevant information is found, return {{}}.
+        
+        Example: {{"lead time": "2 weeks", "unit price": 5.50, "data sheet": "datasheet.pdf"}}
         """
         
         messages = [
@@ -240,14 +358,30 @@ class SupplierAgent:
             
             extracted = json.loads(content)
             
-            # Merge with existing extracted data
-            current_data = state.get("extracted_data", {})
-            updated_data = {**current_data, **extracted}
+            print(f"   📊 Extracted data: {extracted}")
             
-            # Check if all data is now complete
-            data_complete = all(
-                field in updated_data for field in state["missing_data"]
-            )
+            # Normalize extracted field names (underscores → spaces, lowercase)
+            normalized_extracted = {
+                key.replace('_', ' ').lower().strip(): value
+                for key, value in extracted.items()
+            }
+            
+            print(f"   📊 Normalized extracted: {normalized_extracted}")
+            
+            # Merge with existing extracted data (also normalize existing keys)
+            current_data = {
+                key.replace('_', ' ').lower().strip(): value
+                for key, value in extracted_data.items()
+            }
+            updated_data = {**current_data, **normalized_extracted}
+            
+            # missing_data is already normalized at request time
+            # Check if all data is now complete (field names match)
+            required_names = {f["name"] for f in state["missing_data"]}
+            data_complete = required_names.issubset(updated_data.keys())
+            
+            print(f"   📋 Total extracted: {updated_data}")
+            print(f"   ✓ Data complete: {data_complete}")
             
             return {
                 **state,
@@ -255,7 +389,8 @@ class SupplierAgent:
                 "data_complete": data_complete
             }
         except Exception as e:
-            print(f"Error extracting data: {e}")
+            print(f"   ❌ Error extracting data: {e}")
+            print(f"   Raw LLM response: {response.content}")
             return state
     
     async def update_erp(self, state: AgentState) -> AgentState:
@@ -312,22 +447,11 @@ class SupplierAgent:
         return "extract"
     
     def should_update_erp(self, state: AgentState) -> Literal["update", "compose"]:
-        """Determine if all data has been collected and ERP should be updated.
-        
-        Args:
-            state: Current agent state
-            
-        Returns:
-            Next node to execute
-        """
+        """Determine if all data has been collected and ERP should be updated."""
         if state.get("data_complete", False):
+            print("   ✅ All data collected → updating ERP")
             return "update"
         
-        # If we just received a reply but data is still incomplete,
-        # compose a clarification email
-        messages = state.get("messages", [])
-        if messages and isinstance(messages[-1], HumanMessage):
-            return "compose"
-        
-        # Otherwise end the workflow (don't send unsolicited reminders)
-        return "update"
+        # Data incomplete after extraction → compose clarification
+        print("   ❓ Data still incomplete → composing clarification email")
+        return "compose"

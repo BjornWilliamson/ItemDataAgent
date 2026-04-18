@@ -55,10 +55,13 @@ class PostmarkClient:
         
         # If replying to a thread, add reference headers
         if thread_id:
+            # Ensure thread_id has angle brackets for proper email header format
+            formatted_thread_id = thread_id if thread_id.startswith('<') else f"<{thread_id}>"
             email_data["Headers"] = [
-                {"Name": "In-Reply-To", "Value": thread_id},
-                {"Name": "References", "Value": thread_id}
+                {"Name": "In-Reply-To", "Value": formatted_thread_id},
+                {"Name": "References", "Value": formatted_thread_id}
             ]
+            print(f"      → Setting email headers: In-Reply-To={formatted_thread_id}")
         
         try:
             async with httpx.AsyncClient() as client:
@@ -115,33 +118,53 @@ class PostmarkClient:
         thread_id: str,
         since_count: int = 0
     ) -> list[dict[str, Any]]:
-        """Get messages from a specific thread.
-        
-        Args:
-            thread_id: Thread/Message ID
-            since_count: Number of messages already processed (to get only new ones)
-            
-        Returns:
-            List of new message dictionaries with 'body' and 'from' fields
-        """
+        """Get inbound messages from a thread by count offset (legacy)."""
         messages = self.received_emails.get(thread_id, [])
-        
-        # Get only new messages
-        new_messages = messages[since_count:]
-        
-        # Filter to only inbound messages (from supplier)
-        inbound_messages = [
-            msg for msg in new_messages
-            if msg.get("direction") == "inbound"
-        ]
-        
+        inbound = [m for m in messages if m.get("direction") == "inbound"]
         return [{
             "from": msg["from"],
             "body": msg["body"],
             "attachments": msg.get("attachments", []),
             "id": msg["message_id"]
-        } for msg in inbound_messages]
-    
+        } for msg in inbound[since_count:]]
+
+    async def get_new_thread_messages(
+        self,
+        thread_id: str,
+        processed_ids: set[str]
+    ) -> list[dict[str, Any]]:
+        """Get inbound messages not yet processed, identified by message ID.
+
+        Args:
+            thread_id: Thread/Message ID
+            processed_ids: Set of already-processed message IDs
+
+        Returns:
+            List of new inbound message dictionaries
+        """
+        print(f"      🔍 Looking for thread_id: '{thread_id}'")
+        print(f"      🗂️  Available threads: {list(self.received_emails.keys())}")
+
+        messages = self.received_emails.get(thread_id, [])
+        inbound_messages = [m for m in messages if m.get("direction") == "inbound"]
+
+        print(f"      📥 {len(inbound_messages)} total inbound messages in thread")
+        print(f"      ✅ Already processed IDs: {processed_ids}")
+
+        new_messages = [
+            msg for msg in inbound_messages
+            if msg["message_id"] not in processed_ids
+        ]
+
+        print(f"      ✉️  Returning {len(new_messages)} new inbound messages")
+
+        return [{
+            "from": msg["from"],
+            "body": msg["body"],
+            "attachments": msg.get("attachments", []),
+            "id": msg["message_id"]
+        } for msg in new_messages]
+
     def process_inbound_webhook(self, webhook_data: dict[str, Any]) -> None:
         """Process an inbound email webhook from Postmark.
         
@@ -180,6 +203,14 @@ class PostmarkClient:
         # Determine thread ID (prefer In-Reply-To, fallback to References, then create new)
         thread_id = in_reply_to or (references.split()[0] if references else message_id)
         thread_id = str(thread_id)  # Ensure it's a string
+        
+        # Normalize thread ID - remove angle brackets and domain to match state format
+        # This ensures consistency: <id@domain> becomes just: id
+        thread_id = thread_id.strip('<>')
+        if '@' in thread_id:
+            thread_id = thread_id.split('@')[0]
+        
+        print(f"   📎 Normalized thread ID for storage: {thread_id}")
         
         # Store the inbound email
         if thread_id not in self.received_emails:

@@ -4,6 +4,9 @@
 .env.*.local
 .env_old
 
+# Tools
+DBBrowser/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -52,6 +55,9 @@ htmlcov/
 *.db
 *.sqlite
 *.sqlite3
+
+# Persistent state
+thread_mappings.json
 
 # Logs
 *.log

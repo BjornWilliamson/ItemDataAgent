@@ -54,7 +54,7 @@ class EmailPoller:
                 new_messages = await self.imap_client.poll_inbox()
                 
                 if new_messages:
-                    print(f"📬 Received {len(new_messages)} new email(s) from inbox")
+                    print(f"\n📬 Received {len(new_messages)} new email(s) from inbox")
                     for msg in new_messages:
                         print(f"   From: {msg.get('From')}")
                         print(f"   Subject: {msg.get('Subject')}")
@@ -64,6 +64,7 @@ class EmailPoller:
                         
                         # Trigger agent workflow to process the reply
                         if self.reply_handler:
+                            print(f"   🔄 Triggering reply handler...")
                             await self.reply_handler(msg)
                 
                 # Wait before next poll
