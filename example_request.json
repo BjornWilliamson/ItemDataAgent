@@ -1,0 +1,11 @@
+{
+  "item_number": "ITEM-12345",
+  "item_name": "Industrial Bearing Type A",
+  "missing_data": [
+    "lead_time",
+    "minimum_order_quantity",
+    "unit_price",
+    "warranty_period"
+  ],
+  "supplier_email": "sales@supplier-example.com"
+}
