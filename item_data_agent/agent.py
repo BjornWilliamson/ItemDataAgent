@@ -90,9 +90,7 @@ class SupplierAgent:
         - Subsequent runs (triggered by inbound reply): check responses first
         """
         if not state.get("conversation_started"):
-            print("   🚀 Entry: no conversation yet → compose initial email")
             return "compose"
-        print("   🔄 Entry: conversation in progress → check for new replies")
         return "check"
 
     async def compose_email(self, state: AgentState) -> AgentState:
@@ -203,10 +201,8 @@ class SupplierAgent:
         # If this is a follow-up, add "Re:" prefix for proper threading
         if existing_thread_id:
             subject = f"Re: {base_subject}"
-            print(f"   📧 Sending follow-up on thread: {existing_thread_id}")
         else:
             subject = base_subject
-            print(f"   📧 Sending initial email")
         
         # Send email
         thread_id = await self.email_client.send_email(
@@ -216,7 +212,7 @@ class SupplierAgent:
             thread_id=existing_thread_id
         )
         
-        print(f"   ✓ Email sent, thread ID: {thread_id}")
+        print(f"📧 Email sent to {state['supplier_email']} (thread: {thread_id})")
         
         return {
             **state,
@@ -246,16 +242,12 @@ class SupplierAgent:
             processed_ids=processed_ids
         )
         
-        print(f"\n📬 Checking for new messages in thread {state['email_thread_id']}")
-        print(f"   Already processed message IDs: {processed_ids}")
-        print(f"   Found {len(new_messages)} new message(s)")
+        print(f"📬 Found {len(new_messages)} new message(s) in thread {state['email_thread_id']}")
 
-        
         # Convert to HumanMessage objects (from supplier)
         human_messages = []
         for msg in new_messages:
             content = msg["body"]
-            print(f"      → Message preview: {content[:150]}...")
             
             # Add attachment info to the message if present
             if msg.get("attachments"):
@@ -293,18 +285,12 @@ class SupplierAgent:
         # Get the latest supplier message
         latest_message = state["messages"][-1].content
         
-        print(f"   📄 Extracting data from supplier message:")
-        print(f"      Message preview: {latest_message[:200]}...")
-        
         # Determine what data we're still looking for
         extracted_data = state.get("extracted_data", {})
         missing_fields = [
             field for field in state["missing_data"]
             if field["name"] not in extracted_data
         ]
-        
-        print(f"   🔍 Looking for fields: {[f['name'] for f in missing_fields]}")
-        print(f"   ✓ Already have: {list(extracted_data.keys())}")
 
         # Build a typed field description for the extraction prompt
         field_descriptions = []
@@ -358,15 +344,11 @@ class SupplierAgent:
             
             extracted = json.loads(content)
             
-            print(f"   📊 Extracted data: {extracted}")
-            
             # Normalize extracted field names (underscores → spaces, lowercase)
             normalized_extracted = {
                 key.replace('_', ' ').lower().strip(): value
                 for key, value in extracted.items()
             }
-            
-            print(f"   📊 Normalized extracted: {normalized_extracted}")
             
             # Merge with existing extracted data (also normalize existing keys)
             current_data = {
@@ -380,8 +362,7 @@ class SupplierAgent:
             required_names = {f["name"] for f in state["missing_data"]}
             data_complete = required_names.issubset(updated_data.keys())
             
-            print(f"   📋 Total extracted: {updated_data}")
-            print(f"   ✓ Data complete: {data_complete}")
+            print(f"📊 Extracted data: {updated_data} (complete: {data_complete})")
             
             return {
                 **state,
@@ -389,8 +370,7 @@ class SupplierAgent:
                 "data_complete": data_complete
             }
         except Exception as e:
-            print(f"   ❌ Error extracting data: {e}")
-            print(f"   Raw LLM response: {response.content}")
+            print(f"❌ Error extracting data: {e} | LLM response: {response.content}")
             return state
     
     async def update_erp(self, state: AgentState) -> AgentState:
@@ -449,9 +429,7 @@ class SupplierAgent:
     def should_update_erp(self, state: AgentState) -> Literal["update", "compose"]:
         """Determine if all data has been collected and ERP should be updated."""
         if state.get("data_complete", False):
-            print("   ✅ All data collected → updating ERP")
+            print("✅ All data collected → updating ERP")
             return "update"
-        
-        # Data incomplete after extraction → compose clarification
-        print("   ❓ Data still incomplete → composing clarification email")
+        print("❓ Data incomplete → composing clarification email")
         return "compose"

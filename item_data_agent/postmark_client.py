@@ -61,7 +61,6 @@ class PostmarkClient:
                 {"Name": "In-Reply-To", "Value": formatted_thread_id},
                 {"Name": "References", "Value": formatted_thread_id}
             ]
-            print(f"      → Setting email headers: In-Reply-To={formatted_thread_id}")
         
         try:
             async with httpx.AsyncClient() as client:
@@ -142,21 +141,13 @@ class PostmarkClient:
         Returns:
             List of new inbound message dictionaries
         """
-        print(f"      🔍 Looking for thread_id: '{thread_id}'")
-        print(f"      🗂️  Available threads: {list(self.received_emails.keys())}")
-
         messages = self.received_emails.get(thread_id, [])
         inbound_messages = [m for m in messages if m.get("direction") == "inbound"]
-
-        print(f"      📥 {len(inbound_messages)} total inbound messages in thread")
-        print(f"      ✅ Already processed IDs: {processed_ids}")
 
         new_messages = [
             msg for msg in inbound_messages
             if msg["message_id"] not in processed_ids
         ]
-
-        print(f"      ✉️  Returning {len(new_messages)} new inbound messages")
 
         return [{
             "from": msg["from"],
@@ -210,7 +201,7 @@ class PostmarkClient:
         if '@' in thread_id:
             thread_id = thread_id.split('@')[0]
         
-        print(f"   📎 Normalized thread ID for storage: {thread_id}")
+        print(f"Normalized thread ID for storage: {thread_id}")
         
         # Store the inbound email
         if thread_id not in self.received_emails:
@@ -228,9 +219,9 @@ class PostmarkClient:
         })
         
         if attachments:
-            print(f"Received inbound email in thread {thread_id} from {from_email} with {len(attachments)} attachment(s)")
+            print(f"Inbound email from {from_email} in thread {thread_id} ({len(attachments)} attachment(s))")
         else:
-            print(f"Received inbound email in thread {thread_id} from {from_email}")
+            print(f"Inbound email from {from_email} in thread {thread_id}")
     
     async def check_new_replies(self, thread_id: str, last_message_id: str) -> bool:
         """Check if there are new replies in a thread.

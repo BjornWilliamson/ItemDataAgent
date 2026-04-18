@@ -34,9 +34,9 @@ def load_thread_mappings():
         try:
             with open(MAPPING_FILE, 'r') as f:
                 thread_to_item = json.load(f)
-            print(f"📂 Loaded {len(thread_to_item)} thread mappings")
+            print(f"Loaded {len(thread_to_item)} thread mapping(s)")
         except Exception as e:
-            print(f"⚠️ Error loading thread mappings: {e}")
+            print(f"Error loading thread mappings: {e}")
             thread_to_item = {}
 
 
@@ -46,7 +46,7 @@ def save_thread_mappings():
         with open(MAPPING_FILE, 'w') as f:
             json.dump(thread_to_item, f, indent=2)
     except Exception as e:
-        print(f"⚠️ Error saving thread mappings: {e}")
+        print(f"Error saving thread mappings: {e}")
 
 
 @asynccontextmanager
@@ -224,7 +224,6 @@ async def request_item_data(
             thread_id = str(result["email_thread_id"])  # Ensure string
             thread_to_item[thread_id] = request.item_number
             save_thread_mappings()  # Persist immediately
-            print(f"📎 Mapped thread {thread_id} to item {request.item_number}")
         
         # PoC: Disable background monitoring - no automatic reminders
         # Schedule periodic checks for responses in background
@@ -468,15 +467,11 @@ async def process_inbound_reply(webhook_data: dict):
     Args:
         webhook_data: Webhook payload from Postmark
     """
-    print(f"\n🤖 ===== PROCESSING INBOUND REPLY =====")
-    print(f"   From: {webhook_data.get('From')}")
-    print(f"   Subject: {webhook_data.get('Subject')}")
+    print(f"\n📨 Inbound reply from {webhook_data.get('From')} (subject: {webhook_data.get('Subject')})")
     
     if not agent:
-        print(f"   ❌ Agent not initialized!")
+        print("Error: agent not initialized")
         return
-    
-    print(f"🤖 Processing inbound reply from {webhook_data.get('From')}")
     
     # Extract thread ID from headers
     headers = webhook_data.get("Headers", [])
@@ -499,7 +494,7 @@ async def process_inbound_reply(webhook_data: dict):
         thread_id = str(thread_id) if thread_id else None
     
     if not thread_id:
-        print("   ⚠️  No thread ID found, skipping")
+        print("Warning: no thread ID in reply headers, skipping")
         return
     
     # Normalize thread ID - strip angle brackets and domain for matching
@@ -524,14 +519,10 @@ async def process_inbound_reply(webhook_data: dict):
                 break
     
     if not item_number:
-        print(f"   ⚠️  No item number found for thread {thread_id}")
-        print(f"   Normalized: {normalized_thread_id}")
-        print(f"   Available mappings: {list(thread_to_item.keys())}")
+        print(f"Warning: no item mapping for thread {normalized_thread_id} (available: {list(thread_to_item.keys())})")
         return
     
-    print(f"   📧 Thread ID: {thread_id}")
-    print(f"   📦 Item: {item_number}")
-    print(f"   💬 Triggering agent workflow to extract data and respond...")
+    print(f"Processing reply for item {item_number} (thread: {thread_id})")
     
     try:
         graph = await agent.create_graph()
@@ -546,21 +537,18 @@ async def process_inbound_reply(webhook_data: dict):
         state_snapshot = await graph.aget_state(config)
         
         if not state_snapshot.values:
-            print(f"   ⚠️  No state found for item {item_number}")
+            print(f"Warning: no state found for item {item_number}")
             return
         
         current_state = state_snapshot.values
-        print(f"   📋 Current state - Thread ID in state: {current_state.get('email_thread_id')}")
-        print(f"   📋 Conversation started: {current_state.get('conversation_started')}")
         
         # Continue the workflow - it will check for new messages and respond
         result = await graph.ainvoke(current_state, config)
         
-        print(f"   ✓ Agent workflow completed")
         if result.get("data_complete"):
-            print(f"   ✓ All data collected!")
+            print(f"✅ All data collected for item {item_number}")
         else:
-            print(f"   → Clarification email sent")
+            print(f"📧 Clarification email sent for item {item_number}")
         
     except Exception as e:
-        print(f"   ❌ Error processing reply: {e}")
+        print(f"Error processing reply for item {item_number}: {e}")

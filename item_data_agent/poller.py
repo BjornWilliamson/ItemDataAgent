@@ -33,7 +33,7 @@ class EmailPoller:
         
         self.running = True
         self.task = asyncio.create_task(self._poll_loop())
-        print(f"📧 Email polling started (checking every {self.interval} seconds)")
+        print(f"Email polling started (interval: {self.interval}s)")
     
     async def stop(self):
         """Stop the polling service."""
@@ -44,7 +44,7 @@ class EmailPoller:
                 await self.task
             except asyncio.CancelledError:
                 pass
-        print("📧 Email polling stopped")
+        print("Email polling stopped")
     
     async def _poll_loop(self):
         """Main polling loop."""
@@ -54,22 +54,18 @@ class EmailPoller:
                 new_messages = await self.imap_client.poll_inbox()
                 
                 if new_messages:
-                    print(f"\n📬 Received {len(new_messages)} new email(s) from inbox")
+                    print(f"\n� {len(new_messages)} new email(s) from inbox")
                     for msg in new_messages:
-                        print(f"   From: {msg.get('From')}")
-                        print(f"   Subject: {msg.get('Subject')}")
-                        
                         # Process through postmark client for threading
                         self.postmark_client.process_inbound_webhook(msg)
                         
                         # Trigger agent workflow to process the reply
                         if self.reply_handler:
-                            print(f"   🔄 Triggering reply handler...")
                             await self.reply_handler(msg)
                 
                 # Wait before next poll
                 await asyncio.sleep(self.interval)
                 
             except Exception as e:
-                print(f"❌ Error in polling loop: {e}")
+                print(f"Error in polling loop: {e}")
                 await asyncio.sleep(self.interval)
