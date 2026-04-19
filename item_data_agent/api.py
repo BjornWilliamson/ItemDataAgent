@@ -112,6 +112,7 @@ class ItemDataRequest(BaseModel):
     """Request model for initiating supplier communication."""
     
     item_number: str
+    supplier_item_number: str
     item_name: str
     endpoint: str | None = None
     company_id: str | None = None
@@ -127,8 +128,9 @@ class ItemDataRequest(BaseModel):
         json_schema_extra = {
             "example": {
                 "item_number": "ITEM-12345",
+                "supplier_item_number": "IRF3205PbF",
                 "item_name": "Widget Pro 2000",
-                "endpoint": "/items",
+                "endpoint": "/hackaton/v1/updateItem",
                 "missing_data": [
                     {"name": "lead_time", "type": "string"},
                     {"name": "unit_price", "type": "number"},
@@ -203,6 +205,7 @@ async def request_item_data(
         initial_state = {
             "messages": [],
             "item_number": request.item_number,
+            "supplier_item_number": request.supplier_item_number,
             "item_name": request.item_name,
             "endpoint": request.endpoint,
             "company_id": request.company_id,

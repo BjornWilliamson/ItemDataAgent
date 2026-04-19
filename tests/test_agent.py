@@ -35,6 +35,7 @@ async def test_compose_email_initial(supplier_agent):
     state: AgentState = {
         "messages": [],
         "item_number": "TEST-001",
+        "supplier_item_number": "SUP-001",
         "item_name": "Test Widget",
         "missing_data": ["price", "lead_time"],
         "supplier_email": "test@example.com",
@@ -48,7 +49,7 @@ async def test_compose_email_initial(supplier_agent):
     result = await supplier_agent.compose_email(state)
     
     assert len(result["messages"]) > 0
-    assert "TEST-001" in result["messages"][-1].content
+    assert "SUP-001" in result["messages"][-1].content
 
 
 @pytest.mark.asyncio
@@ -59,6 +60,7 @@ async def test_send_email(supplier_agent, mock_postmark_client):
     state: AgentState = {
         "messages": [AIMessage(content="Test email body")],
         "item_number": "TEST-001",
+        "supplier_item_number": "SUP-001",
         "item_name": "Test Widget",
         "missing_data": ["price"],
         "supplier_email": "test@example.com",
@@ -74,6 +76,7 @@ async def test_send_email(supplier_agent, mock_postmark_client):
     assert result["email_thread_id"] == "thread_123"
     assert result["conversation_started"] is True
     mock_postmark_client.send_email.assert_called_once()
+    assert mock_postmark_client.send_email.call_args.kwargs["subject"].endswith("SUP-001")
 
 
 @pytest.mark.asyncio
@@ -84,6 +87,7 @@ async def test_should_extract_data_with_new_message(supplier_agent):
     state: AgentState = {
         "messages": [HumanMessage(content="The price is $50")],
         "item_number": "TEST-001",
+        "supplier_item_number": "SUP-001",
         "item_name": "Test Widget",
         "missing_data": ["price"],
         "supplier_email": "test@example.com",
@@ -105,6 +109,7 @@ async def test_should_update_erp_when_complete(supplier_agent):
     state: AgentState = {
         "messages": [],
         "item_number": "TEST-001",
+        "supplier_item_number": "SUP-001",
         "item_name": "Test Widget",
         "missing_data": [{"name": "price", "type": "number", "description": "Price"}],
         "supplier_email": "test@example.com",
@@ -126,6 +131,7 @@ async def test_update_erp(supplier_agent, mock_erp_client):
     state: AgentState = {
         "messages": [],
         "item_number": "TEST-001",
+        "supplier_item_number": "SUP-001",
         "item_name": "Test Widget",
         "missing_data": ["price"],
         "supplier_email": "test@example.com",
@@ -155,6 +161,7 @@ async def test_update_erp_with_file_includes_filename_and_base64(supplier_agent,
     state: AgentState = {
         "messages": [],
         "item_number": "TEST-001",
+        "supplier_item_number": "SUP-001",
         "item_name": "Test Widget",
         "company_id": "100",
         "missing_data": [{"name": "edm", "type": "file", "description": "EDM file"}],
@@ -195,6 +202,7 @@ async def test_update_erp_forwards_endpoint(supplier_agent, mock_erp_client):
     state: AgentState = {
         "messages": [],
         "item_number": "TEST-001",
+        "supplier_item_number": "SUP-001",
         "item_name": "Test Widget",
         "endpoint": "/custom/items",
         "missing_data": ["price"],

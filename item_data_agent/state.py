@@ -16,6 +16,7 @@ class AgentState(TypedDict):
     
     messages: Annotated[Sequence[BaseMessage], add_messages]
     item_number: str
+    supplier_item_number: str
     item_name: str
     endpoint: str | None
     company_id: str | None

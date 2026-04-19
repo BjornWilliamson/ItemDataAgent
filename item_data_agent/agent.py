@@ -106,31 +106,33 @@ class SupplierAgent:
         # Determine if this is initial contact or follow-up
         is_followup = state.get("conversation_started", False)
         
+        # Normalize missing field specs for backward compatibility with
+        # older states/tests that may still pass a list of strings.
+        normalized_missing_data = [
+            field if isinstance(field, dict)
+            else {"name": str(field), "type": "string", "description": str(field)}
+            for field in state.get("missing_data", [])
+        ]
+
         # Check what data still needs to be collected
         extracted_data = state.get("extracted_data", {})
         missing_fields = [
-            field for field in state["missing_data"]
+            field for field in normalized_missing_data
             if field["name"] not in extracted_data
         ]
         received_fields = [
-            field for field in state["missing_data"]
+            field for field in normalized_missing_data
             if field["name"] in extracted_data
         ]
 
         def field_label(f: dict) -> str:
-            label = f["description"]  # human-readable label
-            if f["type"] == "file":
-                label += " [file attachment]"
-            elif f["type"] == "number":
-                label += " [number]"
-            elif f["type"] == "date":
-                label += " [date]"
-            return label
+            return f["description"]  # human-readable label
         
         sender_name = state.get("sender_name") or settings.sender_name
         sender_title = state.get("sender_title") or settings.sender_title
         company_name = state.get("company_name") or settings.company_name
         supplier_company = state.get("supplier_company") or "your company"
+        supplier_item_number = state.get("supplier_item_number") or state["item_number"]
         language_map = {
             1: {"name": "Swedish", "subject_request": "Informationsförfrågan", "subject_confirm": "Bekräftelse - Information mottagen"},
             999: {"name": "English", "subject_request": "Request for Information", "subject_confirm": "Confirmed - Information Received"},
@@ -147,7 +149,7 @@ class SupplierAgent:
 
         if is_followup:
             if received_fields and missing_fields:
-                user_prompt = f"""Write a follow-up email to {supplier_company} about item {state['item_number']} ({state['item_name']}).
+                user_prompt = f"""Write a follow-up email to {supplier_company} about item {supplier_item_number} ({state['item_name']}).
 
                 Thank them for providing: {', '.join(f['description'] for f in received_fields)}.
                 We still need the following — do NOT re-request what was already received:
@@ -156,7 +158,7 @@ class SupplierAgent:
                 For file fields, remind them to attach the file to their reply.
                 Be polite but clear. Keep it concise."""
             elif missing_fields:
-                user_prompt = f"""Write a follow-up email to {supplier_company} about item {state['item_number']} ({state['item_name']}).
+                user_prompt = f"""Write a follow-up email to {supplier_company} about item {supplier_item_number} ({state['item_name']}).
                 We still need:
                 {chr(10).join(f'  - {field_label(f)}' for f in missing_fields)}
 
@@ -164,10 +166,10 @@ class SupplierAgent:
                 Reference the previous conversation. Be polite but persistent. Keep it concise."""
             else:
                 user_prompt = f"""Write a brief thank-you email to {supplier_company} confirming receipt of all
-                requested information for item {state['item_number']} ({state['item_name']})."""
+                requested information for item {supplier_item_number} ({state['item_name']})."""
         else:
             user_prompt = f"""Write an initial email to {supplier_company} requesting missing product information
-            for item {state['item_number']} ({state['item_name']}).
+            for item {supplier_item_number} ({state['item_name']}).
 
             We need the following:
             {chr(10).join(f'  - {field_label(f)}' for f in missing_fields)}
@@ -206,8 +208,9 @@ class SupplierAgent:
             1: {"name": "Swedish", "subject_request": "Informationsförfrågan", "subject_confirm": "Bekräftelse - Information mottagen"},
             999: {"name": "English", "subject_request": "Request for Information", "subject_confirm": "Confirmed - Information Received"},
         }
+        supplier_item_number = state.get("supplier_item_number") or state["item_number"]
         lang = language_map.get(state.get("language") or 999, language_map[999])
-        base_subject = f"{lang['subject_request']} - {state['item_number']}"
+        base_subject = f"{lang['subject_request']} - {supplier_item_number}"
         
         # Get existing thread ID for follow-ups
         existing_thread_id = state.get("email_thread_id")
@@ -468,9 +471,10 @@ class SupplierAgent:
         )
         
         if success:
+            supplier_item_number = state.get("supplier_item_number") or state["item_number"]
             # Send confirmation email
             confirmation = f"""Thank you for providing the requested information for item 
-            {state['item_number']} ({state['item_name']}). 
+            {supplier_item_number} ({state['item_name']}). 
             
             We have successfully updated our records with the following data:
             {', '.join(f'{k}: {v}' for k, v in state['extracted_data'].items())}
@@ -479,7 +483,7 @@ class SupplierAgent:
             
             await self.email_client.send_email(
                 to=state["supplier_email"],
-                subject=f"{lang['subject_confirm']} - {state['item_number']}",
+                subject=f"{lang['subject_confirm']} - {supplier_item_number}",
                 body=confirmation,
                 thread_id=state["email_thread_id"]
             )

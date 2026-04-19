@@ -13,7 +13,8 @@ class ERPClient:
         self.base_url = settings.erp_api_base_url
         self.api_key = settings.erp_api_key
         self.headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "X-API-KEY": self.api_key,
+            "accept": "application/json",
             "Content-Type": "application/json"
         }
     
@@ -24,7 +25,7 @@ class ERPClient:
             item_number: Item number to update
             data: Dictionary of field names and values to update
             endpoint: Optional static endpoint override; supports absolute URLs or
-                relative paths. Item number is always sent as a query parameter.
+                relative paths. Item number is sent in the request body only.
             
         Returns:
             True if update was successful, False otherwise
@@ -36,14 +37,13 @@ class ERPClient:
             else:
                 url = f"{self.base_url.rstrip('/')}/{resolved_endpoint.lstrip('/')}"
         else:
-            url = f"{self.base_url.rstrip('/')}/items"
+            url = f"{self.base_url.rstrip('/')}/hackaton/v1/updateItem"
         
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.patch(
                     url,
                     json=data,
-                    params={"item_number": item_number},
                     headers=self.headers,
                     timeout=30.0
                 )
