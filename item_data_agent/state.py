@@ -17,6 +17,7 @@ class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
     item_number: str
     item_name: str
+    endpoint: str | None
     company_id: str | None
     missing_data: list[FieldSpec]  # List of field specs with name + type
     supplier_email: str

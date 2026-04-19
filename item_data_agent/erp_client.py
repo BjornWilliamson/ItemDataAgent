@@ -17,23 +17,33 @@ class ERPClient:
             "Content-Type": "application/json"
         }
     
-    async def update_item(self, item_number: str, data: dict[str, Any]) -> bool:
+    async def update_item(self, item_number: str, data: dict[str, Any], endpoint: str | None = None) -> bool:
         """Update item information in the ERP system.
         
         Args:
             item_number: Item number to update
             data: Dictionary of field names and values to update
+            endpoint: Optional static endpoint override; supports absolute URLs or
+                relative paths. Item number is always sent as a query parameter.
             
         Returns:
             True if update was successful, False otherwise
         """
-        url = f"{self.base_url}/items/{item_number}"
+        if endpoint:
+            resolved_endpoint = endpoint.strip()
+            if resolved_endpoint.startswith(("http://", "https://")):
+                url = resolved_endpoint
+            else:
+                url = f"{self.base_url.rstrip('/')}/{resolved_endpoint.lstrip('/')}"
+        else:
+            url = f"{self.base_url.rstrip('/')}/items"
         
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.patch(
                     url,
                     json=data,
+                    params={"item_number": item_number},
                     headers=self.headers,
                     timeout=30.0
                 )

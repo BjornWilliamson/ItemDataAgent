@@ -144,7 +144,8 @@ async def test_update_erp(supplier_agent, mock_erp_client):
         data={
             "item_number": "TEST-001",
             "response_data": [{"name": "price", "value": "$50"}],
-        }
+        },
+        endpoint=None,
     )
 
 
@@ -183,5 +184,36 @@ async def test_update_erp_with_file_includes_filename_and_base64(supplier_agent,
                     },
                 }
             ],
-        }
+        },
+        endpoint=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_erp_forwards_endpoint(supplier_agent, mock_erp_client):
+    """Test that endpoint from state is forwarded to ERP client update call."""
+    state: AgentState = {
+        "messages": [],
+        "item_number": "TEST-001",
+        "item_name": "Test Widget",
+        "endpoint": "/custom/items",
+        "missing_data": ["price"],
+        "supplier_email": "test@example.com",
+        "extracted_data": {"price": "50"},
+        "email_thread_id": "thread_123",
+        "conversation_started": True,
+        "data_complete": True,
+        "erp_updated": False
+    }
+
+    result = await supplier_agent.update_erp(state)
+
+    assert result["erp_updated"] is True
+    mock_erp_client.update_item.assert_called_once_with(
+        item_number="TEST-001",
+        data={
+            "item_number": "TEST-001",
+            "response_data": [{"name": "price", "value": "50"}],
+        },
+        endpoint="/custom/items",
     )

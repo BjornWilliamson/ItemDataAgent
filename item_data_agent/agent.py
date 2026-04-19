@@ -1,5 +1,5 @@
 """Langgraph agent"""
-from typing import Literal
+from typing import Any, Literal
 import base64
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -463,7 +463,8 @@ class SupplierAgent:
 
         success = await self.erp_client.update_item(
             item_number=state["item_number"],
-            data=erp_data
+            data=erp_data,
+            endpoint=state.get("endpoint")
         )
         
         if success:
