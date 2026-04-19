@@ -258,6 +258,20 @@ class SupplierAgent:
         
         print(f"📬 Found {len(new_messages)} new message(s) in thread {state['email_thread_id']}")
 
+        # Allowed MIME types for file attachments (security whitelist)
+        ALLOWED_CONTENT_TYPES = {
+            "application/pdf",
+            "image/jpeg",
+            "image/png",
+            "image/tiff",
+            "image/webp",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",       # xlsx
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # docx
+            "application/vnd.ms-excel",   # xls
+            "text/plain",
+            "text/csv",
+        }
+
         # Convert to HumanMessage objects (from supplier)
         human_messages = []
         new_file_attachments = dict(state.get("file_attachments") or {})
@@ -271,6 +285,12 @@ class SupplierAgent:
                     att_name = att.get("Name", "unknown")
                     att_type = att.get("ContentType", "unknown")
                     att_size = att.get("ContentLength", 0)
+                    # Reject disallowed MIME types
+                    mime_base = att_type.split(";")[0].strip().lower()
+                    if mime_base not in ALLOWED_CONTENT_TYPES:
+                        print(f"⚠️ Rejected attachment '{att_name}' with disallowed type '{att_type}'")
+                        attachment_info += f"  - {att_name} (REJECTED: unsupported file type '{att_type}')\n"
+                        continue
                     attachment_info += f"  - {att_name} ({att_type}, {att_size} bytes)\n"
                     # Store base64 content keyed by filename
                     raw = att.get("Content")
