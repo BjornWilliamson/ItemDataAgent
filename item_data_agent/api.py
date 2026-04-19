@@ -113,6 +113,7 @@ class ItemDataRequest(BaseModel):
     
     item_number: str
     item_name: str
+    company_id: str | None = None
     missing_data: list[FieldSpec]
     supplier_email: EmailStr
     supplier_company: str | None = None
@@ -135,7 +136,8 @@ class ItemDataRequest(BaseModel):
                 "supplier_company": "Acme Supplier Ltd",
                 "sender_name": "Bjorn Williamson",
                 "sender_title": "Procurement Manager",
-                "company_name": "130 AB"
+                "company_name": "130 AB",
+                "company_id": "12345"
             }
         }
 
@@ -200,6 +202,7 @@ async def request_item_data(
             "messages": [],
             "item_number": request.item_number,
             "item_name": request.item_name,
+            "company_id": request.company_id,
             # Keep name as-is (ERP column key), only normalize type
             "missing_data": [
                 {

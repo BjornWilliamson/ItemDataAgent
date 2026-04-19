@@ -1,4 +1,4 @@
-"""LangGraph agent implementation for supplier communication."""
+"""Langgraph agent"""
 from typing import Literal
 import base64
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
@@ -423,8 +423,12 @@ class SupplierAgent:
         file_attachments = state.get("file_attachments") or {}
         file_fields = {f["name"] for f in state["missing_data"] if f["type"] == "file"}
         erp_data = {
-            key: (file_attachments.get(value, value) if key in file_fields else value)
-            for key, value in state["extracted_data"].items()
+            "item_number": state["item_number"],
+            **({"company_id": state["company_id"]} if state.get("company_id") else {}),
+            **{
+                key: (file_attachments.get(value, value) if key in file_fields else value)
+                for key, value in state["extracted_data"].items()
+            }
         }
 
         success = await self.erp_client.update_item(

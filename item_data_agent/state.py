@@ -6,9 +6,9 @@ from langgraph.graph.message import add_messages
 
 class FieldSpec(TypedDict):
     """Specification for a missing data field."""
-    name: str         # ERP column key - returned as-is in extracted_data
-    type: str         # string | number | boolean | file | date
-    description: str  # Human-readable label used in emails and extraction prompts
+    name: str         # Jeeves column name
+    type: str         # Datatype string | number | boolean | file | date
+    description: str  # Label used in emails and extraction prompts
 
 
 class AgentState(TypedDict):
@@ -17,13 +17,14 @@ class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
     item_number: str
     item_name: str
+    company_id: str | None
     missing_data: list[FieldSpec]  # List of field specs with name + type
     supplier_email: str
     supplier_company: str | None
     sender_name: str | None
     sender_title: str | None
     company_name: str | None
-    language: int  # e.g. 1 = Swedish, 999 = English
+    language: int  # Jeeves Sprakkode (1=sv, 999=en, needs to be extended, language map in agent.py)
     extracted_data: dict[str, str]  # field name → extracted value or filename
     file_attachments: dict[str, str]  # filename → base64 content (for file-type fields)
     email_thread_id: str | None

@@ -1,4 +1,4 @@
-"""ERP API client for updating item information."""
+"""Jeeves ERP API client for updating item information."""
 import httpx
 from typing import Any
 
@@ -6,10 +6,10 @@ from item_data_agent.config import settings
 
 
 class ERPClient:
-    """Client for interacting with the ERP REST API."""
+    """Client for interacting with the Jeeves API-Platform."""
     
     def __init__(self):
-        """Initialize the ERP client."""
+        """Initialize the API client."""
         self.base_url = settings.erp_api_base_url
         self.api_key = settings.erp_api_key
         self.headers = {
