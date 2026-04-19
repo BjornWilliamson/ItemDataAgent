@@ -1,5 +1,6 @@
 """LangGraph agent implementation for supplier communication."""
 from typing import Literal
+import base64
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
@@ -117,9 +118,7 @@ class SupplierAgent:
         ]
 
         def field_label(f: dict) -> str:
-            label = f["name"]
-            if f.get("description"):
-                label += f" ({f['description']})"
+            label = f["description"]  # human-readable label
             if f["type"] == "file":
                 label += " [file attachment]"
             elif f["type"] == "number":
@@ -132,10 +131,17 @@ class SupplierAgent:
         sender_title = state.get("sender_title") or settings.sender_title
         company_name = state.get("company_name") or settings.company_name
         supplier_company = state.get("supplier_company") or "your company"
+        language_map = {
+            1: {"name": "Swedish", "subject_request": "Informationsförfrågan", "subject_confirm": "Bekräftelse - Information mottagen"},
+            999: {"name": "English", "subject_request": "Request for Information", "subject_confirm": "Confirmed - Information Received"},
+        }
+        language_code = state.get("language") or 999
+        lang = language_map.get(language_code, language_map[999])
+        language = lang["name"]
 
         system_prompt = f"""You are {sender_name}, {sender_title} at {company_name}.
         You are writing professional procurement emails to suppliers to gather missing product data.
-        Be polite, clear, and concise. Sign off every email as:
+        Be polite, clear, and concise. Write the email in {language}. Sign off every email as:
         {sender_name}
         {sender_title}, {company_name}"""
 
@@ -143,7 +149,7 @@ class SupplierAgent:
             if received_fields and missing_fields:
                 user_prompt = f"""Write a follow-up email to {supplier_company} about item {state['item_number']} ({state['item_name']}).
 
-                Thank them for providing: {', '.join(f['name'] for f in received_fields)}.
+                Thank them for providing: {', '.join(f['description'] for f in received_fields)}.
                 We still need the following — do NOT re-request what was already received:
                 {chr(10).join(f'  - {field_label(f)}' for f in missing_fields)}
 
@@ -196,7 +202,12 @@ class SupplierAgent:
         email_body = state["messages"][-1].content
         
         # Compose subject line
-        base_subject = f"Request for Information - Item {state['item_number']}"
+        language_map = {
+            1: {"name": "Swedish", "subject_request": "Informationsförfrågan", "subject_confirm": "Bekräftelse - Information mottagen"},
+            999: {"name": "English", "subject_request": "Request for Information", "subject_confirm": "Confirmed - Information Received"},
+        }
+        lang = language_map.get(state.get("language") or 999, language_map[999])
+        base_subject = f"{lang['subject_request']} - {state['item_number']}"
         
         # Get existing thread ID for follow-ups
         existing_thread_id = state.get("email_thread_id")
@@ -249,6 +260,7 @@ class SupplierAgent:
 
         # Convert to HumanMessage objects (from supplier)
         human_messages = []
+        new_file_attachments = dict(state.get("file_attachments") or {})
         for msg in new_messages:
             content = msg["body"]
             
@@ -260,6 +272,14 @@ class SupplierAgent:
                     att_type = att.get("ContentType", "unknown")
                     att_size = att.get("ContentLength", 0)
                     attachment_info += f"  - {att_name} ({att_type}, {att_size} bytes)\n"
+                    # Store base64 content keyed by filename
+                    raw = att.get("Content")
+                    if raw is not None:
+                        if isinstance(raw, bytes):
+                            new_file_attachments[att_name] = base64.b64encode(raw).decode("utf-8")
+                        elif isinstance(raw, str):
+                            # Already base64 (e.g. from Postmark webhook)
+                            new_file_attachments[att_name] = raw
                 attachment_info += "]"
                 content += attachment_info
             
@@ -271,7 +291,8 @@ class SupplierAgent:
             return {
                 **state,
                 "messages": [*state.get("messages", []), *[m["msg"] for m in human_messages]],
-                "processed_message_ids": new_processed_ids
+                "processed_message_ids": new_processed_ids,
+                "file_attachments": new_file_attachments
             }
         
         return state
@@ -286,6 +307,7 @@ class SupplierAgent:
             Updated state with extracted data
         """
         # Get the latest supplier message
+        import json
         latest_message = state["messages"][-1].content
         
         # Determine what data we're still looking for
@@ -297,17 +319,15 @@ class SupplierAgent:
 
         # Build a typed field description for the extraction prompt
         field_descriptions = []
-        file_fields = []
         for f in missing_fields:
-            desc = f"- {f['name']} (type: {f['type']})"
-            if f.get("description"):
-                desc += f": {f['description']}"
+            desc = f"- {f['name']} ({f['description']}, type: {f['type']})"
             field_descriptions.append(desc)
-            if f["type"] == "file":
-                file_fields.append(f["name"])
+        
+        # Build example with actual field names
+        example_fields = {f['name']: ("5.50" if f['type'] == 'number' else ("datasheet.pdf" if f['type'] == 'file' else "value")) for f in missing_fields[:2]}
         
         extraction_prompt = f"""Analyze the following supplier response and extract information 
-        for these fields:
+        for these fields (use the exact field name as the JSON key):
         {chr(10).join(field_descriptions)}
         
         Supplier response:
@@ -321,11 +341,11 @@ class SupplierAgent:
         - For 'file' fields: if an attachment filename is mentioned in [Attachments received:...], 
           use that filename as the value. Otherwise leave it out.
         
-        Return ONLY a JSON object with field names as keys.
+        Return ONLY a JSON object using the exact field names as keys.
         Only include fields where information was clearly found.
         If no relevant information is found, return {{}}.
         
-        Example: {{"lead time": "2 weeks", "unit price": 5.50, "data sheet": "datasheet.pdf"}}
+        Example: {json.dumps(example_fields)}
         """
         
         messages = [
@@ -337,7 +357,6 @@ class SupplierAgent:
         
         # Parse the extracted data (simplified - in production, use structured output)
         try:
-            import json
             # Extract JSON from response
             content = response.content
             if "```json" in content:
@@ -347,21 +366,10 @@ class SupplierAgent:
             
             extracted = json.loads(content)
             
-            # Normalize extracted field names (underscores → spaces, lowercase)
-            normalized_extracted = {
-                key.replace('_', ' ').lower().strip(): value
-                for key, value in extracted.items()
-            }
+            # Merge with existing extracted data (no normalization - keys are ERP column names)
+            updated_data = {**extracted_data, **extracted}
             
-            # Merge with existing extracted data (also normalize existing keys)
-            current_data = {
-                key.replace('_', ' ').lower().strip(): value
-                for key, value in extracted_data.items()
-            }
-            updated_data = {**current_data, **normalized_extracted}
-            
-            # missing_data is already normalized at request time
-            # Check if all data is now complete (field names match)
+            # Check completeness against required ERP column names
             required_names = {f["name"] for f in state["missing_data"]}
             data_complete = required_names.issubset(updated_data.keys())
             
@@ -385,9 +393,23 @@ class SupplierAgent:
         Returns:
             Updated state with ERP update status
         """
+        language_map = {
+            1: {"name": "Swedish", "subject_request": "Informationsförfrågan", "subject_confirm": "Bekräftelse - Information mottagen"},
+            999: {"name": "English", "subject_request": "Request for Information", "subject_confirm": "Confirmed - Information Received"},
+        }
+        lang = language_map.get(state.get("language") or 999, language_map[999])
+
+        # Build ERP payload - substitute file fields with base64 content
+        file_attachments = state.get("file_attachments") or {}
+        file_fields = {f["name"] for f in state["missing_data"] if f["type"] == "file"}
+        erp_data = {
+            key: (file_attachments.get(value, value) if key in file_fields else value)
+            for key, value in state["extracted_data"].items()
+        }
+
         success = await self.erp_client.update_item(
             item_number=state["item_number"],
-            data=state["extracted_data"]
+            data=erp_data
         )
         
         if success:
@@ -402,7 +424,7 @@ class SupplierAgent:
             
             await self.email_client.send_email(
                 to=state["supplier_email"],
-                subject=f"Confirmed - Information Received for Item {state['item_number']}",
+                subject=f"{lang['subject_confirm']} - {state['item_number']}",
                 body=confirmation,
                 thread_id=state["email_thread_id"]
             )

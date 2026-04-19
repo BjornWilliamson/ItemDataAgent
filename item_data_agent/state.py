@@ -6,9 +6,9 @@ from langgraph.graph.message import add_messages
 
 class FieldSpec(TypedDict):
     """Specification for a missing data field."""
-    name: str
-    type: str  # string | number | boolean | file | date
-    description: str | None
+    name: str         # ERP column key - returned as-is in extracted_data
+    type: str         # string | number | boolean | file | date
+    description: str  # Human-readable label used in emails and extraction prompts
 
 
 class AgentState(TypedDict):
@@ -23,7 +23,9 @@ class AgentState(TypedDict):
     sender_name: str | None
     sender_title: str | None
     company_name: str | None
+    language: int  # e.g. 1 = Swedish, 999 = English
     extracted_data: dict[str, str]  # field name → extracted value or filename
+    file_attachments: dict[str, str]  # filename → base64 content (for file-type fields)
     email_thread_id: str | None
     conversation_started: bool
     data_complete: bool

@@ -103,9 +103,9 @@ app = FastAPI(
 
 class FieldSpec(BaseModel):
     """Specification for a missing data field."""
-    name: str
+    name: str          # ERP column key
     type: str = "string"  # string | number | boolean | file | date
-    description: str | None = None
+    description: str   # Human-readable label for emails and extraction
 
 
 class ItemDataRequest(BaseModel):
@@ -119,6 +119,7 @@ class ItemDataRequest(BaseModel):
     sender_name: str | None = None
     sender_title: str | None = None
     company_name: str | None = None
+    language: int = 999  # 1 = Swedish, 999 = English
     
     class Config:
         json_schema_extra = {
@@ -199,10 +200,10 @@ async def request_item_data(
             "messages": [],
             "item_number": request.item_number,
             "item_name": request.item_name,
-            # Normalize field names, preserve type and description
+            # Keep name as-is (ERP column key), only normalize type
             "missing_data": [
                 {
-                    "name": f.name.replace('_', ' ').lower().strip(),
+                    "name": f.name,
                     "type": f.type.lower(),
                     "description": f.description
                 }
@@ -213,7 +214,9 @@ async def request_item_data(
             "sender_name": request.sender_name,
             "sender_title": request.sender_title,
             "company_name": request.company_name,
+            "language": request.language,
             "extracted_data": {},
+            "file_attachments": {},
             "email_thread_id": None,
             "conversation_started": False,
             "data_complete": False,
@@ -520,6 +523,11 @@ async def process_inbound_reply(webhook_data: dict):
         return tid
     
     normalized_thread_id = normalize_thread_id(thread_id)
+    
+    # Resolve to canonical thread ID - follow-up emails get new MessageIDs, but
+    # postmark_client.message_to_thread maps them back to the original thread
+    if postmark_client:
+        normalized_thread_id = postmark_client.message_to_thread.get(normalized_thread_id, normalized_thread_id)
     
     # Try to find item number with normalized ID
     item_number = thread_to_item.get(thread_id)  # Try exact match first

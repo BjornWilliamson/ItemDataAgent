@@ -201,6 +201,10 @@ class PostmarkClient:
         if '@' in thread_id:
             thread_id = thread_id.split('@')[0]
         
+        # Resolve to canonical thread ID - if this is a reply to a follow-up/clarification,
+        # map back to the original thread so all messages stay under the same key
+        thread_id = self.message_to_thread.get(thread_id, thread_id)
+        
         print(f"Normalized thread ID for storage: {thread_id}")
         
         # Store the inbound email
