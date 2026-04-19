@@ -19,6 +19,10 @@ class AgentState(TypedDict):
     item_name: str
     missing_data: list[FieldSpec]  # List of field specs with name + type
     supplier_email: str
+    supplier_company: str | None
+    sender_name: str | None
+    sender_title: str | None
+    company_name: str | None
     extracted_data: dict[str, str]  # field name → extracted value or filename
     email_thread_id: str | None
     conversation_started: bool

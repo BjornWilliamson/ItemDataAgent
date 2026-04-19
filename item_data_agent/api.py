@@ -115,6 +115,10 @@ class ItemDataRequest(BaseModel):
     item_name: str
     missing_data: list[FieldSpec]
     supplier_email: EmailStr
+    supplier_company: str | None = None
+    sender_name: str | None = None
+    sender_title: str | None = None
+    company_name: str | None = None
     
     class Config:
         json_schema_extra = {
@@ -126,7 +130,11 @@ class ItemDataRequest(BaseModel):
                     {"name": "unit_price", "type": "number"},
                     {"name": "data_sheet", "type": "file", "description": "PDF datasheet"}
                 ],
-                "supplier_email": "supplier@example.com"
+                "supplier_email": "supplier@example.com",
+                "supplier_company": "Acme Supplier Ltd",
+                "sender_name": "Bjorn Williamson",
+                "sender_title": "Procurement Manager",
+                "company_name": "130 AB"
             }
         }
 
@@ -201,6 +209,10 @@ async def request_item_data(
                 for f in request.missing_data
             ],
             "supplier_email": request.supplier_email,
+            "supplier_company": request.supplier_company,
+            "sender_name": request.sender_name,
+            "sender_title": request.sender_title,
+            "company_name": request.company_name,
             "extracted_data": {},
             "email_thread_id": None,
             "conversation_started": False,

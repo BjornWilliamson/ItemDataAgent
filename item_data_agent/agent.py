@@ -128,44 +128,47 @@ class SupplierAgent:
                 label += " [date]"
             return label
         
-        system_prompt = """You are a professional procurement assistant helping to gather 
-        missing product information from suppliers. Be polite, clear, and concise in your 
-        communications. Always maintain a professional tone."""
-        
+        sender_name = state.get("sender_name") or settings.sender_name
+        sender_title = state.get("sender_title") or settings.sender_title
+        company_name = state.get("company_name") or settings.company_name
+        supplier_company = state.get("supplier_company") or "your company"
+
+        system_prompt = f"""You are {sender_name}, {sender_title} at {company_name}.
+        You are writing professional procurement emails to suppliers to gather missing product data.
+        Be polite, clear, and concise. Sign off every email as:
+        {sender_name}
+        {sender_title}, {company_name}"""
+
         if is_followup:
             if received_fields and missing_fields:
-                user_prompt = f"""Compose a follow-up email to the supplier about item {state['item_number']} 
-                ({state['item_name']}).
-                
-                IMPORTANT: Thank them for providing: {', '.join(f['name'] for f in received_fields)}.
-                Clearly state that we STILL NEED:
+                user_prompt = f"""Write a follow-up email to {supplier_company} about item {state['item_number']} ({state['item_name']}).
+
+                Thank them for providing: {', '.join(f['name'] for f in received_fields)}.
+                We still need the following — do NOT re-request what was already received:
                 {chr(10).join(f'  - {field_label(f)}' for f in missing_fields)}
-                
-                Do NOT re-request the information we already received.
+
                 For file fields, remind them to attach the file to their reply.
-                Be polite but clear about what's needed.
-                Keep the email concise and professional."""
+                Be polite but clear. Keep it concise."""
             elif missing_fields:
-                user_prompt = f"""Compose a follow-up email to the supplier about item {state['item_number']} 
-                ({state['item_name']}). We still need:
+                user_prompt = f"""Write a follow-up email to {supplier_company} about item {state['item_number']} ({state['item_name']}).
+                We still need:
                 {chr(10).join(f'  - {field_label(f)}' for f in missing_fields)}
-                
+
                 For file fields, ask them to attach the file to their reply.
-                Reference the previous conversation and be polite but persistent.
-                Keep the email concise and professional."""
+                Reference the previous conversation. Be polite but persistent. Keep it concise."""
             else:
-                user_prompt = f"""Compose a brief thank you email acknowledging receipt of all 
-                requested information for item {state['item_number']}."""
+                user_prompt = f"""Write a brief thank-you email to {supplier_company} confirming receipt of all
+                requested information for item {state['item_number']} ({state['item_name']})."""
         else:
-            user_prompt = f"""Compose an initial email to the supplier requesting missing information 
+            user_prompt = f"""Write an initial email to {supplier_company} requesting missing product information
             for item {state['item_number']} ({state['item_name']}).
-            
-            We need the following information:
+
+            We need the following:
             {chr(10).join(f'  - {field_label(f)}' for f in missing_fields)}
-            
+
             For file fields, ask them to attach the file to their reply.
-            Be polite, introduce the request clearly, and ask for a timely response.
-            Keep the email concise and professional."""
+            Introduce yourself and the request clearly, and ask for a response at their earliest convenience.
+            Keep it concise and professional."""
         
         messages = [
             SystemMessage(content=system_prompt),

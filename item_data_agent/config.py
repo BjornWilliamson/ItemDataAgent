@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     erp_api_base_url: str
     erp_api_key: str
     
+    # Sender identity (used in outgoing emails)
+    sender_name: str = "Procurement"
+    sender_title: str = "Procurement Manager"
+    company_name: str = "Our Company"
+
     # Application Configuration
     host: str = "0.0.0.0"
     port: int = 8000
