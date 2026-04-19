@@ -50,6 +50,7 @@ uv.lock
 .pytest_cache/
 .coverage
 htmlcov/
+tests/
 
 # Database
 *.db

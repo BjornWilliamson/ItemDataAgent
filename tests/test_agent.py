@@ -20,7 +20,6 @@ def mock_erp_client():
     """Create a mock ERP client."""
     client = MagicMock()
     client.update_item = AsyncMock(return_value=True)
-    client.get_item = AsyncMock(return_value={"item_number": "TEST-001"})
     return client
 
 
@@ -107,7 +106,7 @@ async def test_should_update_erp_when_complete(supplier_agent):
         "messages": [],
         "item_number": "TEST-001",
         "item_name": "Test Widget",
-        "missing_data": ["price"],
+        "missing_data": [{"name": "price", "type": "number", "description": "Price"}],
         "supplier_email": "test@example.com",
         "extracted_data": {"price": "$50"},
         "email_thread_id": "thread_123",
@@ -142,5 +141,47 @@ async def test_update_erp(supplier_agent, mock_erp_client):
     assert result["erp_updated"] is True
     mock_erp_client.update_item.assert_called_once_with(
         item_number="TEST-001",
-        data={"price": "$50"}
+        data={
+            "item_number": "TEST-001",
+            "response_data": [{"name": "price", "value": "$50"}],
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_update_erp_with_file_includes_filename_and_base64(supplier_agent, mock_erp_client):
+    """Test ERP payload for file fields includes both file name and content."""
+    state: AgentState = {
+        "messages": [],
+        "item_number": "TEST-001",
+        "item_name": "Test Widget",
+        "company_id": "100",
+        "missing_data": [{"name": "edm", "type": "file", "description": "EDM file"}],
+        "supplier_email": "test@example.com",
+        "extracted_data": {"edm": "spec.pdf"},
+        "file_attachments": {"spec.pdf": "YWRkd2VhZGtzYSBwZGlzYSBkYW9kLi4u"},
+        "email_thread_id": "thread_123",
+        "conversation_started": True,
+        "data_complete": True,
+        "erp_updated": False
+    }
+
+    result = await supplier_agent.update_erp(state)
+
+    assert result["erp_updated"] is True
+    mock_erp_client.update_item.assert_called_once_with(
+        item_number="TEST-001",
+        data={
+            "item_number": "TEST-001",
+            "company_id": "100",
+            "response_data": [
+                {
+                    "name": "edm",
+                    "value": {
+                        "file_name": "spec.pdf",
+                        "content_base64": "YWRkd2VhZGtzYSBwZGlzYSBkYW9kLi4u",
+                    },
+                }
+            ],
+        }
     )

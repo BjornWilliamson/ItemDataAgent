@@ -419,16 +419,46 @@ class SupplierAgent:
         }
         lang = language_map.get(state.get("language") or 999, language_map[999])
 
-        # Build ERP payload - substitute file fields with base64 content
+        # Build ERP payload and only include attributes explicitly requested.
+        # For file fields, send both original file name and base64 content.
         file_attachments = state.get("file_attachments") or {}
-        file_fields = {f["name"] for f in state["missing_data"] if f["type"] == "file"}
+        requested_names: set[str] = set()
+        file_fields: set[str] = set()
+        for field in state.get("missing_data", []):
+            if isinstance(field, str):
+                requested_names.add(field)
+                continue
+            if isinstance(field, dict):
+                name = field.get("name")
+                if not name:
+                    continue
+                requested_names.add(name)
+                if field.get("type") == "file":
+                    file_fields.add(name)
+
+        response_data = []
+        for key, value in state["extracted_data"].items():
+            if key not in requested_names:
+                continue
+
+            if key in file_fields:
+                file_name = str(value)
+                mapped_value: Any = {
+                    "file_name": file_name,
+                    "content_base64": file_attachments.get(file_name, ""),
+                }
+            else:
+                mapped_value = value
+
+            response_data.append({
+                "name": key,
+                "value": mapped_value,
+            })
+
         erp_data = {
             "item_number": state["item_number"],
             **({"company_id": state["company_id"]} if state.get("company_id") else {}),
-            **{
-                key: (file_attachments.get(value, value) if key in file_fields else value)
-                for key, value in state["extracted_data"].items()
-            }
+            "response_data": response_data,
         }
 
         success = await self.erp_client.update_item(

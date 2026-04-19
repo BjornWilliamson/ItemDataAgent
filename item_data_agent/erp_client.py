@@ -48,32 +48,3 @@ class ERPClient:
         except httpx.RequestError as e:
             print(f"Error updating ERP: {e}")
             return False
-    
-    async def get_item(self, item_number: str) -> dict[str, Any] | None:
-        """Get item information from the ERP system.
-        
-        Args:
-            item_number: Item number to retrieve
-            
-        Returns:
-            Item data dictionary or None if not found
-        """
-        url = f"{self.base_url}/items/{item_number}"
-        
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    url,
-                    headers=self.headers,
-                    timeout=30.0
-                )
-                
-                if response.status_code == 200:
-                    return response.json()
-                else:
-                    print(f"Item not found or error. Status: {response.status_code}")
-                    return None
-                    
-        except httpx.RequestError as e:
-            print(f"Error retrieving item from ERP: {e}")
-            return None
