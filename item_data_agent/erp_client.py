@@ -37,7 +37,7 @@ class ERPClient:
             else:
                 url = f"{self.base_url.rstrip('/')}/{resolved_endpoint.lstrip('/')}"
         else:
-            url = f"{self.base_url.rstrip('/')}/hackaton/v1/updateItem"
+            url = f"{self.base_url.rstrip('/')}/itemagent/v1/updateItem"
         
         try:
             async with httpx.AsyncClient() as client:

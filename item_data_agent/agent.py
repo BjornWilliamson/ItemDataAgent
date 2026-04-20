@@ -417,8 +417,18 @@ class SupplierAgent:
             Updated state with ERP update status
         """
         language_map = {
-            1: {"name": "Swedish", "subject_request": "Informationsförfrågan", "subject_confirm": "Bekräftelse - Information mottagen"},
-            999: {"name": "English", "subject_request": "Request for Information", "subject_confirm": "Confirmed - Information Received"},
+            1: {
+                "name": "Swedish",
+                "subject_request": "Informationsförfrågan",
+                "subject_confirm": "Bekräftelse - Information mottagen",
+                "confirm_body": "Tack för att du tillhandahöll den begärda informationen för artikel {item}. Vi har framgångsrikt uppdaterat våra register med följande data:"
+            },
+            999: {
+                "name": "English",
+                "subject_request": "Request for Information",
+                "subject_confirm": "Confirmed - Information Received",
+                "confirm_body": "Thank you for providing the requested information for item {item}. We have successfully updated our records with the following data:"
+            },
         }
         lang = language_map.get(state.get("language") or 999, language_map[999])
 
@@ -472,14 +482,24 @@ class SupplierAgent:
         
         if success:
             supplier_item_number = state.get("supplier_item_number") or state["item_number"]
-            # Send confirmation email
-            confirmation = f"""Thank you for providing the requested information for item 
-            {supplier_item_number} ({state['item_name']}). 
+            # Build a map of field names to human-readable descriptions for supplier email
+            field_descriptions = {}
+            for field in state.get("missing_data", []):
+                if isinstance(field, dict):
+                    field_descriptions[field.get("name")] = field.get("description", field.get("name"))
+                else:
+                    field_descriptions[str(field)] = str(field)
             
-            We have successfully updated our records with the following data:
-            {', '.join(f'{k}: {v}' for k, v in state['extracted_data'].items())}
+            # Send confirmation email in the requested language with human-readable field names
+            item_ref = f"{supplier_item_number} ({state['item_name']})"
+            data_lines = []
+            for field_name, field_value in state['extracted_data'].items():
+                description = field_descriptions.get(field_name, field_name)
+                data_lines.append(f'{description}: {field_value}')
             
-            Best regards"""
+            confirmation = f"""{lang['confirm_body'].format(item=item_ref)}
+            
+{chr(10).join(data_lines)}"""
             
             await self.email_client.send_email(
                 to=state["supplier_email"],
