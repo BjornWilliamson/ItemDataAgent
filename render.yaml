@@ -2,6 +2,7 @@ services:
   - type: web
     name: item-data-agent
     runtime: python
+    rootDir: .
     buildCommand: pip install uv && uv sync --no-dev
     startCommand: uv run uvicorn item_data_agent.api:app --host 0.0.0.0 --port $PORT
     envVars:
