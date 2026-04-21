@@ -2,7 +2,8 @@
 from contextlib import asynccontextmanager
 import json
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
+from fastapi import Depends, FastAPI, HTTPException, BackgroundTasks, Request, Security
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, EmailStr
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
@@ -93,6 +94,15 @@ async def lifespan(app: FastAPI):
     email_poller = None
 
 
+_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+async def verify_api_key(api_key: str | None = Security(_api_key_header)):
+    """Validate the X-API-Key header against the configured secret."""
+    if api_key != settings.api_key:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+
 app = FastAPI(
     title="Item Data Agent API",
     description="AI agent for supplier communication and item data management",
@@ -173,7 +183,8 @@ async def health():
 @app.post("/api/v1/request-item-data", response_model=AgentResponse)
 async def request_item_data(
     request: ItemDataRequest,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    _: None = Depends(verify_api_key)
 ):
     """Trigger the agent to request missing item data from supplier.
     
@@ -309,7 +320,7 @@ async def monitor_conversation(graph, config: dict, item_number: str):
 
 
 @app.get("/api/v1/status/{item_number}")
-async def get_status(item_number: str):
+async def get_status(item_number: str, _: None = Depends(verify_api_key)):
     """Get the current status of an item data request.
     
     Args:
@@ -362,7 +373,7 @@ async def get_status(item_number: str):
 
 
 @app.get("/api/v1/attachments/{item_number}")
-async def get_attachments(item_number: str):
+async def get_attachments(item_number: str, _: None = Depends(verify_api_key)):
     """Get all attachments received for an item data request.
     
     Args:

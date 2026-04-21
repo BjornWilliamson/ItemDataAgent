@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     sender_title: str = "Procurement Manager"
     company_name: str = "Our Company"
 
+    # API Security
+    api_key: str
+
     # Application Configuration
     host: str = "0.0.0.0"
     port: int = 8000
