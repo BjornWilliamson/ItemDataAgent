@@ -1,0 +1,44 @@
+services:
+  - type: web
+    name: item-data-agent
+    runtime: python
+    buildCommand: pip install uv && uv sync --no-dev
+    startCommand: uv run uvicorn item_data_agent.api:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: POSTMARK_API_TOKEN
+        sync: false
+      - key: POSTMARK_FROM_EMAIL
+        sync: false
+      - key: IMAP_SERVER
+        sync: false
+      - key: IMAP_PORT
+        sync: false
+      - key: IMAP_USERNAME
+        sync: false
+      - key: IMAP_PASSWORD
+        sync: false
+      - key: IMAP_USE_SSL
+        sync: false
+      - key: ERP_API_BASE_URL
+        sync: false
+      - key: ERP_API_KEY
+        sync: false
+      - key: API_KEY
+        sync: false
+      - key: SENDER_NAME
+        sync: false
+      - key: SENDER_TITLE
+        sync: false
+      - key: COMPANY_NAME
+        sync: false
+      - key: DATABASE_PATH
+        value: /data/agent_data.db
+      - key: LOG_LEVEL
+        value: INFO
+
+    disk:
+      name: agent-db
+      mountPath: /data
+      sizeGB: 1
