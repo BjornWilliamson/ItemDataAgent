@@ -40,7 +40,9 @@ class IMAPClient:
         new_messages = []
         
         try:
+            print(f"IMAP connecting to {self.server}:{self.port} as {self.username}")
             with MailBox(self.server, self.port).login(self.username, self.password) as mailbox:
+                print("IMAP connected successfully")
                 # Get unread messages
                 for msg in mailbox.fetch(AND(seen=False), mark_seen=False, limit=50):
                     message_id = msg.uid
@@ -70,8 +72,9 @@ class IMAPClient:
                     # Mark as read so we don't process again
                     mailbox.flag(msg.uid, ['\\SEEN'], True)
             
+            print(f"IMAP fetch complete: {len(new_messages)} new message(s)")
             return new_messages
-            
+
         except Exception as e:
             print(f"Error fetching IMAP messages: {e}")
             return []
