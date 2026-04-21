@@ -40,7 +40,7 @@ class IMAPClient:
         new_messages = []
         
         try:
-            with MailBox(self.server).login(self.username, self.password) as mailbox:
+            with MailBox(self.server, self.port).login(self.username, self.password) as mailbox:
                 # Get unread messages
                 for msg in mailbox.fetch(AND(seen=False), mark_seen=False, limit=50):
                     message_id = msg.uid
