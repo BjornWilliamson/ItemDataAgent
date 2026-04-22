@@ -75,7 +75,6 @@ class IMAPClient:
             print(f"IMAP fetch complete: {len(new_messages)} new message(s)")
             return new_messages
 
-
         except Exception as e:
             print(f"Error fetching IMAP messages: {e}")
             return []
