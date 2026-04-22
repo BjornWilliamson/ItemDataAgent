@@ -1,25 +1,26 @@
 # Item Data Agent
 
-An AI-powered agent system that automatically communicates with suppliers via email (using Postmark) to request missing product information, tracks the conversation, extracts data from responses, and updates your ERP system.
+An AI-powered agent system that automatically communicates with suppliers via email to request missing product information, tracks the conversation, extracts data from responses, and updates your ERP system.
 
 ## Features
 
 - 🤖 **AI-Powered Communication**: Uses GPT-4 to compose professional emails to suppliers
-- 📧 **Postmark Integration**: Sends and receives emails through Postmark's reliable API
+- 📧 **Pluggable Email Backends**: Use Postmark API or SMTP for outbound email
+- 📥 **IMAP Inbound Processing**: Receives supplier replies by polling mailbox via IMAP
 - 💬 **Conversation Tracking**: Maintains context across multiple email exchanges
 - 🔍 **Information Extraction**: Automatically extracts structured data from supplier responses
 - 🔄 **ERP Integration**: Updates your ERP system via REST API when data is complete
 - 🚀 **API Triggered**: Simple REST API to initiate supplier communications
 - 📊 **State Management**: Uses LangGraph for robust workflow orchestration
-- 🪝 **Webhook-Based**: Receives inbound emails via Postmark webhooks (no polling required)
+- 🪝 **Optional Webhook Endpoint**: Still supports webhook-style inbound payloads when available
 
 ## Architecture
 
 The system uses LangGraph to orchestrate a multi-step workflow:
 
 1. **Compose Email**: AI generates professional request based on missing data
-2. **Send Email**: Email sent via Postmark API
-3. **Receive Replies**: Inbound emails received via Postmark webhook
+2. **Send Email**: Email sent via configured backend (Postmark or SMTP)
+3. **Receive Replies**: Inbound emails processed from IMAP polling (and optional webhook)
 4. **Extract Data**: AI extracts structured information from responses
 5. **Update ERP**: Pushes extracted data to ERP system via REST API
 
@@ -27,7 +28,7 @@ The system uses LangGraph to orchestrate a multi-step workflow:
 
 - Python 3.11 or higher
 - [UV package manager](https://github.com/astral-sh/uv)
-- Postmark account (free tier available at [postmarkapp.com](https://postmarkapp.com))
+- Email provider access (Postmark or SMTP-capable provider)
 - OpenAI API key
 - ERP system with REST API access
 
@@ -52,7 +53,14 @@ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 uv sync
 ```
 
-### 4. Set up Postmark
+### 4. Configure your email provider
+
+Option A: SMTP (recommended if Postmark is unavailable)
+
+1. Get SMTP host, port, username, password, and sender mailbox from your provider
+2. Ensure IMAP is enabled on the same mailbox (for inbound polling)
+
+Option B: Postmark
 
 1. Sign up for a free account at [postmarkapp.com](https://postmarkapp.com)
 2. Create a new server in your account
@@ -76,9 +84,24 @@ Edit `.env` and add your configuration:
 # OpenAI API Configuration
 OPENAI_API_KEY=sk-your-api-key-here
 
+# API security
+API_KEY=your-api-key-here
+
+# Email backend: postmark | smtp
+EMAIL_BACKEND=smtp
+
+# SMTP Configuration (for EMAIL_BACKEND=smtp)
+SMTP_SERVER=smtp.yourprovider.com
+SMTP_PORT=587
+SMTP_USERNAME=procurement@yourdomain.com
+SMTP_PASSWORD=your-smtp-password
+SMTP_FROM_EMAIL=procurement@yourdomain.com
+SMTP_USE_SSL=false
+SMTP_STARTTLS=true
+
 # Postmark Configuration
-POSTMARK_API_TOKEN=your-postmark-server-token-here
-POSTMARK_FROM_EMAIL=sender@yourdomain.com
+POSTMARK_API_TOKEN=
+POSTMARK_FROM_EMAIL=
 
 # ERP API Configuration
 ERP_API_BASE_URL=https://your-erp-system.com/api
@@ -233,14 +256,15 @@ The system expects your ERP API to support:
 
 Modify `erp_client.py` to match your ERP's API structure.
 
-### Postmark API Integration
+### Email Backend Integration
 
-The system expects:
-- A valid Postmark Server API Token
-- A verified sender email address
-- Inbound webhook configured to point to your application
+The system supports:
+- `EMAIL_BACKEND=postmark`: Postmark API for outbound mail
+- `EMAIL_BACKEND=smtp`: SMTP for outbound mail
 
-Modify `postmark_client.py` if you need custom email templates or additional features.
+Inbound processing uses IMAP polling, independent of outbound backend.
+
+Modify `postmark_client.py` or `smtp_client.py` for backend-specific behavior.
 
 ## Development
 

@@ -8,7 +8,8 @@ from pydantic import BaseModel, EmailStr
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from item_data_agent.agent import SupplierAgent
-from item_data_agent.postmark_client import PostmarkClient
+from item_data_agent.email_client import EmailClient
+from item_data_agent.email_factory import create_email_client
 from item_data_agent.erp_client import ERPClient
 from item_data_agent.imap_client import IMAPClient
 from item_data_agent.poller import EmailPoller
@@ -16,7 +17,7 @@ from item_data_agent.config import settings
 
 
 # Global instances
-postmark_client: PostmarkClient | None = None
+email_client: EmailClient | None = None
 erp_client: ERPClient | None = None
 imap_client: IMAPClient | None = None
 agent: SupplierAgent | None = None
@@ -53,15 +54,15 @@ def save_thread_mappings():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events."""
-    global postmark_client, erp_client, imap_client, agent, email_poller, checkpointer_context
+    global email_client, erp_client, imap_client, agent, email_poller, checkpointer_context
     
     # Startup
     load_thread_mappings()  # Load persisted mappings
     
-    postmark_client = PostmarkClient()
+    email_client = create_email_client()
     erp_client = ERPClient()
     imap_client = IMAPClient()
-    agent = SupplierAgent(postmark_client, erp_client)
+    agent = SupplierAgent(email_client, erp_client)
     
     # Initialize checkpointer with context manager
     checkpointer_context = AsyncSqliteSaver.from_conn_string(settings.database_path)
@@ -69,8 +70,8 @@ async def lifespan(app: FastAPI):
     
     # Start email polling (checks IMAP inbox every 30 seconds)
     email_poller = EmailPoller(
-        postmark_client, 
-        imap_client, 
+        email_client,
+        imap_client,
         interval=30,
         reply_handler=process_inbound_reply
     )
@@ -87,7 +88,7 @@ async def lifespan(app: FastAPI):
         await checkpointer_context.__aexit__(None, None, None)
     
     save_thread_mappings()  # Save mappings before shutdown
-    postmark_client = None
+    email_client = None
     erp_client = None
     imap_client = None
     agent = None
@@ -382,7 +383,7 @@ async def get_attachments(item_number: str, _: None = Depends(verify_api_key)):
     Returns:
         List of attachment metadata (not the actual files)
     """
-    if not postmark_client or not agent:
+    if not email_client or not agent:
         raise HTTPException(
             status_code=503,
             detail="Service not initialized"
@@ -411,7 +412,7 @@ async def get_attachments(item_number: str, _: None = Depends(verify_api_key)):
             return {"attachments": []}
         
         # Get attachments from the thread
-        attachments = postmark_client.get_thread_attachments(thread_id)
+        attachments = email_client.get_thread_attachments(thread_id)
         
         # Return metadata only (not the binary content)
         return {
@@ -454,7 +455,7 @@ async def inbound_email_webhook(request: Request, background_tasks: BackgroundTa
     Returns:
         Success response
     """
-    if not postmark_client or not agent:
+    if not email_client or not agent:
         raise HTTPException(
             status_code=503,
             detail="Service not initialized"
@@ -465,7 +466,7 @@ async def inbound_email_webhook(request: Request, background_tasks: BackgroundTa
         webhook_data = await request.json()
         
         # Process the inbound email
-        postmark_client.process_inbound_webhook(webhook_data)
+        email_client.process_inbound_webhook(webhook_data)
         
         # Trigger the agent to process the new message
         # Extract thread ID and continue the workflow
@@ -545,9 +546,9 @@ async def process_inbound_reply(webhook_data: dict):
     normalized_thread_id = normalize_thread_id(thread_id)
     
     # Resolve to canonical thread ID - follow-up emails get new MessageIDs, but
-    # postmark_client.message_to_thread maps them back to the original thread
-    if postmark_client:
-        normalized_thread_id = postmark_client.message_to_thread.get(normalized_thread_id, normalized_thread_id)
+    # email_client.message_to_thread maps them back to the original thread
+    if email_client:
+        normalized_thread_id = email_client.message_to_thread.get(normalized_thread_id, normalized_thread_id)
     
     # Try to find item number with normalized ID
     item_number = thread_to_item.get(thread_id)  # Try exact match first

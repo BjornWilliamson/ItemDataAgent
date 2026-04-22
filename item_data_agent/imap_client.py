@@ -40,12 +40,11 @@ class IMAPClient:
         new_messages = []
         
         try:
-            print(f"IMAP connecting to {self.server}:{self.port} as {self.username}")
-            with MailBox(self.server, self.port).login(self.username, self.password) as mailbox:
-                print("IMAP connected successfully")
+            with MailBox(self.server).login(self.username, self.password) as mailbox:
                 # Get unread messages
                 for msg in mailbox.fetch(AND(seen=False), mark_seen=False, limit=50):
-                    message_id = msg.uid
+                    headers = self._extract_headers(msg)
+                    message_id = self._extract_message_id(msg, headers)
                     
                     # Skip if already processed
                     if message_id in self.processed_message_ids:
@@ -62,7 +61,7 @@ class IMAPClient:
                         "Subject": msg.subject,
                         "TextBody": msg.text or "",
                         "HtmlBody": msg.html or "",
-                        "Headers": self._extract_headers(msg),
+                        "Headers": headers,
                         "Attachments": self._extract_attachments(msg),
                         "ReceivedAt": msg.date.isoformat() if msg.date else datetime.now().isoformat()
                     }
@@ -72,12 +71,18 @@ class IMAPClient:
                     # Mark as read so we don't process again
                     mailbox.flag(msg.uid, ['\\SEEN'], True)
             
-            print(f"IMAP fetch complete: {len(new_messages)} new message(s)")
             return new_messages
-
+            
         except Exception as e:
             print(f"Error fetching IMAP messages: {e}")
             return []
+
+    def _extract_message_id(self, msg: MailMessage, headers: list[dict[str, str]]) -> str:
+        """Extract RFC Message-ID when available, fallback to IMAP UID."""
+        for header in headers:
+            if header.get("Name") == "Message-ID" and header.get("Value"):
+                return str(header["Value"])
+        return str(msg.uid)
     
     def _extract_headers(self, msg: MailMessage) -> list[dict[str, str]]:
         """Extract relevant headers from email message.

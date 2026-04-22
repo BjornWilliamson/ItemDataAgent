@@ -8,21 +8,21 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from item_data_agent.state import AgentState
 from item_data_agent.config import settings
-from item_data_agent.postmark_client import PostmarkClient
+from item_data_agent.email_client import EmailClient
 from item_data_agent.erp_client import ERPClient
 
 
 class SupplierAgent:
     """AI agent for managing supplier communications."""
     
-    def __init__(self, postmark_client: PostmarkClient, erp_client: ERPClient):
+    def __init__(self, email_client: EmailClient, erp_client: ERPClient):
         """Initialize the supplier agent.
         
         Args:
-            postmark_client: Client for Postmark email operations
+            email_client: Client for email send/receive operations
             erp_client: Client for ERP operations
         """
-        self.email_client = postmark_client
+        self.email_client = email_client
         self.erp_client = erp_client
         self.llm = ChatOpenAI(
             model="gpt-4o",

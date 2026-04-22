@@ -1,16 +1,17 @@
 """Postmark API client for sending and receiving emails."""
 import httpx
 from typing import Any
-from datetime import datetime
 
 from item_data_agent.config import settings
+from item_data_agent.email_client import InMemoryThreadStore
 
 
-class PostmarkClient:
+class PostmarkClient(InMemoryThreadStore):
     """Client for interacting with Postmark API."""
     
     def __init__(self):
         """Initialize the Postmark client."""
+        super().__init__()
         self.api_token = settings.postmark_api_token
         self.from_email = settings.postmark_from_email
         self.base_url = "https://api.postmarkapp.com"
@@ -19,12 +20,6 @@ class PostmarkClient:
             "Content-Type": "application/json",
             "X-Postmark-Server-Token": self.api_token
         }
-        # In-memory storage for received emails (in production, use a database)
-        self.received_emails: dict[str, list[dict[str, Any]]] = {}
-        # Track processed message IDs to avoid duplicates
-        self.processed_message_ids: set[str] = set()
-        # Track sent message IDs to thread mapping
-        self.message_to_thread: dict[str, str] = {}
     
     async def send_email(
         self,
@@ -74,35 +69,30 @@ class PostmarkClient:
                 if response.status_code == 200:
                     result = response.json()
                     message_id = result.get("MessageID", "")
-                    
+
                     # Store sent email for thread tracking
                     if thread_id:
-                        if thread_id not in self.received_emails:
-                            self.received_emails[thread_id] = []
-                        self.received_emails[thread_id].append({
-                            "message_id": message_id,
-                            "from": self.from_email,
-                            "to": to,
-                            "subject": subject,
-                            "body": body,
-                            "direction": "outbound",
-                            "timestamp": datetime.now().isoformat()
-                        })
-                        self.message_to_thread[message_id] = thread_id
+                        self.register_outbound_message(
+                            message_id=message_id,
+                            thread_id=thread_id,
+                            from_email=self.from_email,
+                            to_email=to,
+                            subject=subject,
+                            body=body,
+                        )
                         return thread_id
                     else:
                         # New thread - use message ID as thread ID
-                        self.received_emails[message_id] = [{
-                            "message_id": message_id,
-                            "from": self.from_email,
-                            "to": to,
-                            "subject": subject,
-                            "body": body,
-                            "direction": "outbound",
-                            "timestamp": datetime.now().isoformat()
-                        }]
-                        self.message_to_thread[message_id] = message_id
-                        return message_id
+                        canonical_thread_id = self.normalize_message_ref(message_id) or message_id
+                        self.register_outbound_message(
+                            message_id=message_id,
+                            thread_id=canonical_thread_id,
+                            from_email=self.from_email,
+                            to_email=to,
+                            subject=subject,
+                            body=body,
+                        )
+                        return canonical_thread_id
                 else:
                     error_msg = response.text
                     print(f"Failed to send email. Status: {response.status_code}, Error: {error_msg}")
@@ -115,117 +105,20 @@ class PostmarkClient:
     async def get_thread_messages(
         self,
         thread_id: str,
-        since_count: int = 0
+        since_count: int = 0,
     ) -> list[dict[str, Any]]:
         """Get inbound messages from a thread by count offset (legacy)."""
         messages = self.received_emails.get(thread_id, [])
         inbound = [m for m in messages if m.get("direction") == "inbound"]
-        return [{
-            "from": msg["from"],
-            "body": msg["body"],
-            "attachments": msg.get("attachments", []),
-            "id": msg["message_id"]
-        } for msg in inbound[since_count:]]
-
-    async def get_new_thread_messages(
-        self,
-        thread_id: str,
-        processed_ids: set[str]
-    ) -> list[dict[str, Any]]:
-        """Get inbound messages not yet processed, identified by message ID.
-
-        Args:
-            thread_id: Thread/Message ID
-            processed_ids: Set of already-processed message IDs
-
-        Returns:
-            List of new inbound message dictionaries
-        """
-        messages = self.received_emails.get(thread_id, [])
-        inbound_messages = [m for m in messages if m.get("direction") == "inbound"]
-
-        new_messages = [
-            msg for msg in inbound_messages
-            if msg["message_id"] not in processed_ids
+        return [
+            {
+                "from": msg["from"],
+                "body": msg["body"],
+                "attachments": msg.get("attachments", []),
+                "id": msg["message_id"],
+            }
+            for msg in inbound[since_count:]
         ]
-
-        return [{
-            "from": msg["from"],
-            "body": msg["body"],
-            "attachments": msg.get("attachments", []),
-            "id": msg["message_id"]
-        } for msg in new_messages]
-
-    def process_inbound_webhook(self, webhook_data: dict[str, Any]) -> None:
-        """Process an inbound email webhook from Postmark.
-        
-        This should be called by the webhook endpoint when Postmark
-        sends an inbound email notification.
-        
-        Args:
-            webhook_data: Webhook payload from Postmark
-        """
-        # Extract email details from webhook
-        message_id = webhook_data.get("MessageID", "")
-        from_email = webhook_data.get("From", "")
-        to_email = webhook_data.get("To", "")
-        subject = webhook_data.get("Subject", "")
-        text_body = webhook_data.get("TextBody", "")
-        html_body = webhook_data.get("HtmlBody", "")
-        attachments = webhook_data.get("Attachments", [])
-        
-        # Get reference headers to determine thread
-        headers = webhook_data.get("Headers", [])
-        in_reply_to = None
-        references = None
-        
-        for header in headers:
-            if header.get("Name") == "In-Reply-To":
-                in_reply_to = header.get("Value")
-            elif header.get("Name") == "References":
-                references = header.get("Value")
-        
-        # Ensure values are strings not tuples
-        if isinstance(in_reply_to, (list, tuple)):
-            in_reply_to = in_reply_to[0] if in_reply_to else None
-        if isinstance(references, (list, tuple)):
-            references = references[0] if references else None
-        
-        # Determine thread ID (prefer In-Reply-To, fallback to References, then create new)
-        thread_id = in_reply_to or (references.split()[0] if references else message_id)
-        thread_id = str(thread_id)  # Ensure it's a string
-        
-        # Normalize thread ID - remove angle brackets and domain to match state format
-        # This ensures consistency: <id@domain> becomes just: id
-        thread_id = thread_id.strip('<>')
-        if '@' in thread_id:
-            thread_id = thread_id.split('@')[0]
-        
-        # Resolve to canonical thread ID - if this is a reply to a follow-up/clarification,
-        # map back to the original thread so all messages stay under the same key
-        thread_id = self.message_to_thread.get(thread_id, thread_id)
-        
-        print(f"Normalized thread ID for storage: {thread_id}")
-        
-        # Store the inbound email
-        if thread_id not in self.received_emails:
-            self.received_emails[thread_id] = []
-        
-        self.received_emails[thread_id].append({
-            "message_id": message_id,
-            "from": from_email,
-            "to": to_email,
-            "subject": subject,
-            "body": text_body or html_body,
-            "attachments": attachments,
-            "direction": "inbound",
-            "timestamp": datetime.now().isoformat()
-        })
-        
-        if attachments:
-            print(f"Inbound email from {from_email} in thread {thread_id} ({len(attachments)} attachment(s))")
-        else:
-            print(f"Inbound email from {from_email} in thread {thread_id}")
     
     async def check_new_replies(self, thread_id: str, last_message_id: str) -> bool:
         """Check if there are new replies in a thread.
@@ -243,33 +136,6 @@ class PostmarkClient:
         
         # Check if the last message ID in thread is different
         return messages[-1]["message_id"] != last_message_id
-    
-    def get_thread_attachments(self, thread_id: str) -> list[dict[str, Any]]:
-        """Get all attachments from a thread.
-        
-        Args:
-            thread_id: Thread/Message ID
-            
-        Returns:
-            List of all attachments from the thread with metadata
-        """
-        messages = self.received_emails.get(thread_id, [])
-        all_attachments = []
-        
-        for msg in messages:
-            if msg.get("direction") == "inbound":
-                attachments = msg.get("attachments", [])
-                for att in attachments:
-                    all_attachments.append({
-                        "filename": att.get("Name"),
-                        "content_type": att.get("ContentType"),
-                        "size": att.get("ContentLength"),
-                        "content": att.get("Content"),
-                        "message_from": msg.get("from"),
-                        "timestamp": msg.get("timestamp")
-                    })
-        
-        return all_attachments
     
     async def poll_inbound_messages(self) -> list[dict[str, Any]]:
         """Poll Postmark for new inbound messages.

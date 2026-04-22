@@ -14,10 +14,22 @@ class Settings(BaseSettings):
     
     # OpenAI Configuration
     openai_api_key: str
+
+    # Email backend: postmark | smtp
+    email_backend: str = "smtp"
     
     # Postmark Configuration
-    postmark_api_token: str
-    postmark_from_email: str
+    postmark_api_token: str = ""
+    postmark_from_email: str = ""
+
+    # SMTP Configuration (for non-Postmark sending)
+    smtp_server: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+    smtp_use_ssl: bool = False
+    smtp_starttls: bool = True
     
     # IMAP Configuration (for receiving replies)
     imap_server: str = "imap.one.com"

@@ -2,24 +2,24 @@
 import asyncio
 from typing import Optional, Callable, Awaitable
 
-from item_data_agent.postmark_client import PostmarkClient
+from item_data_agent.email_client import EmailClient
 from item_data_agent.imap_client import IMAPClient
 
 
 class EmailPoller:
     """Background service that polls for inbound emails."""
     
-    def __init__(self, postmark_client: PostmarkClient, imap_client: IMAPClient, interval: int = 30, 
+    def __init__(self, email_client: EmailClient, imap_client: IMAPClient, interval: int = 30,
                  reply_handler: Optional[Callable[[dict], Awaitable[None]]] = None):
         """Initialize the email poller.
         
         Args:
-            postmark_client: Postmark client instance
+            email_client: Email client instance
             imap_client: IMAP client instance for reading inbox
             interval: Polling interval in seconds (default: 30)
             reply_handler: Optional async function to handle inbound replies
         """
-        self.postmark_client = postmark_client
+        self.email_client = email_client
         self.imap_client = imap_client
         self.interval = interval
         self.reply_handler = reply_handler
@@ -56,8 +56,8 @@ class EmailPoller:
                 if new_messages:
                     print(f"\n� {len(new_messages)} new email(s) from inbox")
                     for msg in new_messages:
-                        # Process through postmark client for threading
-                        self.postmark_client.process_inbound_webhook(msg)
+                        # Process through email client for threading
+                        self.email_client.process_inbound_webhook(msg)
                         
                         # Trigger agent workflow to process the reply
                         if self.reply_handler:
